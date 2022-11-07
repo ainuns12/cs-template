@@ -1,0 +1,4 @@
+import { LayanV2 } from '@bahasa-ai/plugins-iris'
+
+
+export const {{LayanService}} = new LayanV2(process.env.FONDASI_URL, process.env.FONDASI_APPLICATION)

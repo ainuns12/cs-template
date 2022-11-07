@@ -1,0 +1,9 @@
+  route.post('/fondasi/:integration/:agentId', BasicAuth(process.env.FONDASI_WEBHOOK_AUTH), async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      logger.debug('Layan webhook %j', req.body)
+      await ToCustomer({ ...req.body, agentId: req.params.agentId, integration: req.params.integration })
+      return res.status(200).send({ success: 'MESSAGE SENT' })
+    } catch (error) {
+      return next(error)
+    }
+  })

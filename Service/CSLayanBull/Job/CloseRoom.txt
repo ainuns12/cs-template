@@ -1,0 +1,46 @@
+import { database } from '@bahasa-ai/engine-database'
+import * as Sentry from '@sentry/node'
+import { {{Type}} } from '../../../Type/{{Type}}'
+import { logger } from '../../../Util/Logger'
+import { {{LayanService}} } from '../../{{LayanService}}'
+
+export default () => {
+  return async (job: {{Type}}.JobData<{{Type}}.CloseRoomType>, done: () => void) => {
+    try {
+      const { integration, sourceId, agentId } = job.data
+      const users = await database().User.get({
+        agentId: { $eq: agentId },
+        sourceId: { $eq: sourceId },
+        integration: { $eq: integration }
+      })
+      const user = users[0]
+
+      if (user.userData.isInHumanFallback) {
+        // close room procedure
+        const { layanTicketId, layanAuthToken } = user.userData
+
+        await database().User.update({ _id: { $eq: user._id } }, {
+          userData: {
+            ...user.userData,
+            isInHumanFallback: false,
+            layanAuthToken: null,
+            layanTicketId: null
+          }
+        })
+        await {{LayanService}}.V1.customerReply(`Token ${layanAuthToken}`, {
+          type: 'info',
+          isPublic: false,
+          content: {
+            type: 'text',
+            text: 'Percapakan sudah diakhiri secara otomatis karena tidak ada percakapan selama 1 x 24 jam'
+          },
+        })
+        await {{LayanService}}.V1.solveTicket(`Token ${layanAuthToken}`, layanTicketId)
+      }
+    } catch (e) {
+      logger.error(e)
+      Sentry.captureException(e)
+    }
+    done()
+  }
+}

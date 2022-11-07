@@ -1,0 +1,22 @@
+export namespace {{Type}} {
+  export type JobData<T> = {
+    data: T
+  }
+
+  export type OTPReminder = {
+    sourceId: string,
+    sessionId: string,
+    integration: string,
+    config: string,
+    counter: number,
+    agentId: string,
+    metode: string
+  }
+  export type CloseRoomType = {
+    sourceId: string,
+    sessionId: string,
+    integration: string,
+    config: string,
+    agentId: string
+  }
+}

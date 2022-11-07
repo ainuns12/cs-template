@@ -1,0 +1,97 @@
+import * as moment from 'moment-timezone'
+import { Prototyper } from '../Service/Prototyper'
+import Response from './Response'
+
+function WorkingDay(): string {
+  const startDay = Number(process.env.WD_START)
+  const endDay = Number(process.env.WD_END)
+
+  const days = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu']
+  return `${days[startDay]} - ${days[endDay]}`
+
+}
+
+function WorkingHour(): string {
+  const startTime = Number(process.env.WH_START)
+  const endTime = Number(process.env.WH_END)
+
+  const start = moment().hours(startTime).minutes(0).format('HH.mm')
+  const end = moment().hours(endTime).minutes(0).format('HH.mm')
+
+  return `${start} - ${end}`
+
+}
+
+
+const usePrototyperResponse = false
+
+/**
+const prototyperResponse = {
+  ConnectToCS: Prototyper.get.intentMain('connect_cs').responses(),
+  CsNotAvailable: Prototyper.get.intentPreventError('connect_cs_not_available').responses(),
+  ConnectedToCS: Prototyper.get.intentMain('connected_to_CS').responses(),
+  DisconnectedFromCsByAgent: Prototyper.get.intentMain('disconnect_cs').responses(),
+  DisconnectedFromCsByUser: Prototyper.get.intentMain('disconnect_cs_by_user').responses(),
+  CloseMode: Prototyper.get.intentMain('connect_close_mode').responses(),
+  NotWorkingHour: Prototyper.get.intentMain('connect_in_not_working_hour').responses()
+}
+ */
+
+
+const staticResponse = {
+  ConnectToCS: Response.text(['Mohon tunggu sebentar, Anda akan segera dihubungkan dengan Agent kami 👩🏻‍💻']),
+  CsNotAvailable: Response.text([
+    [
+      'Mohon maaf, tim Live Agent  sedang tidak tersedia 😔',
+      '',
+      'Silakan hubungi kami lagi nanti'
+    ].join('\n')
+  ]),
+  ConnectedToCS: Response.text([
+    [
+      'Anda telah terhubung dengan Live Agent kami 👩🏻‍💻',
+      '',
+      '_Pesan selanjutnya merupakan balasan dari tim kami._'
+    ].join('\n')
+  ]),
+  DisconnectedFromCsByAgent: Response.text([
+    [
+      'Live Agent kami telah mengakhiri sesi percakapan.',
+      '',
+      'Terima kasih telah menghubungi kami 😊'
+    ].join('\n')
+  ]),
+  DisconnectedFromCsByUser: Response.text([
+    [
+      'Baik, kamu tidak jadi menghubungi tim kami 🙏',
+      '',
+      'Ketik menu untuk kembali ke menu'
+    ].join('\n')
+  ]),
+  CloseMode: Response.text([
+    [
+      'Mohon maaf, saat ini layanan CS sedang dalam pemeliharaan rutin🙏'
+    ].join('\n')
+  ]),
+  NotWorkingHour: Response.text([
+    [
+      'Terima kasih telah menghubungi layanan Customer Service kami, maaf saat ini Anda menghubungi di luar jam operasional 🙏',
+      '',
+      `Anda dapat menghubungi kami kembali pada hari kerja ${WorkingDay()} pukul ${WorkingHour()} WIB.`
+    ].join('\n')
+  ]),
+  DisconnectCsError: Response.text([
+    [
+      'Kami tidak mengerti apa yang kamu maksud 🙏',
+    ].join('\n')
+  ])
+}
+
+
+export default function CSResponse() {
+  // if (usePrototyperResponse) {
+  //   return prototyperResponse
+  // }
+
+  return staticResponse
+}

@@ -1,0 +1,112 @@
+import { ActivateIris } from '../../Action/{{Action}}'
+import LogEvent from '../../Action/LogEvent'
+import { InitialIntent, PushIntent } from '../../Bot'
+import CSResponse from '../../Util/CSResponse'
+import Response from '../../Util/Response'
+import { InteractiveExpression } from '../../Util/ReusableExpression'
+
+export class {{IntentInit}} extends InitialIntent {
+
+  static parameter = {
+    keyword: {
+      entity: 'bantuanKeyword'
+    }
+  }
+
+   static userExpression = [
+    {
+      sentence: 'bantuan',
+      parameter: {
+        bantuanKeyword: '0,0'
+      }
+    },
+    {
+      sentence: 'mau cs',
+      parameter: {
+        bantuanKeyword: '1,1'
+      }
+    }
+  ]
+
+  public actions() {
+    return this.run(LogEvent).run(ActivateIris)
+  }
+}
+
+export class {{MainIntent}} extends PushIntent {
+  static isContextReplaced = true
+  static contextOut = [
+    '{{Context}}'
+  ]
+
+  public async push(e: EventMiddleware) {
+    return await this.trigger(e, {
+      response: Response.merge(CSResponse().ConnectToCS)
+    })
+  }
+}
+
+export class {{IntentNotWorkingHour}} extends PushIntent {
+  static isContextReplaced = true
+  static contextOut = [
+    '{{Context}}'
+  ]
+
+  public async push(e: EventMiddleware) {
+    return await this.trigger(e, {
+      response: Response.merge(CSResponse().NotWorkingHour)
+    })
+  }
+}
+
+export class {{IntentNotAvailable}} extends PushIntent {
+  static isContextReplaced = true
+  static contextOut = [
+    '{{Context}}'
+  ]
+
+  public async push(e: EventMiddleware) {
+    return await this.trigger(e, {
+      response: Response.merge(CSResponse().CsNotAvailable)
+    })
+  }
+}
+
+export class {{IntentConnected}} extends PushIntent {
+  static isContextReplaced = true
+  static contextOut = [
+    '{{Context}}'
+  ]
+
+  public async push(e: EventMiddleware) {
+    return await this.trigger(e, {
+      response: Response.merge(CSResponse().ConnectedToCS)
+    })
+  }
+}
+
+export class {{IntentPushTicketClosedByAgent}} extends PushIntent {
+  static isContextReplaced = true
+  static contextOut = [
+    '{{Context}}'
+  ]
+  public async push(event: EventMiddleware) {
+
+    return await this.trigger(event, {
+      response: Response.merge(CSResponse().DisconnectedFromCsByAgent)
+    })
+  }
+}
+
+export class {{IntentPushTicketClosedByUser}} extends PushIntent {
+  static isContextReplaced = true
+  static contextOut = [
+    '{{Context}}'
+  ]
+
+  public async push(event: EventMiddleware) {
+    return await this.trigger(event, {
+      response: Response.merge(CSResponse().DisconnectedFromCsByUser)
+    })
+  }
+}

@@ -1,0 +1,31 @@
+import LogEvent from '../../Action/LogEvent'
+import { FallbackIntent, PushIntent } from '../../Bot'
+import Response from '../../Util/Response'
+import CSResponse from '../../Util/CSResponse'
+
+
+export class {{IntentFallback}} extends FallbackIntent {
+  static contextIn = [
+    '{{Context}}'
+  ]
+
+  public actions() {
+    return this.run(LogEvent)
+      .run(async (e: EventMiddleware) => {
+        return await new {{IntentFallbackPush}}().push(e)
+      })
+  }
+}
+
+export class {{IntentFallbackPush}} extends PushIntent {
+  static isContextReplaced = true
+  static contextOut = [
+    '{{Context}}'
+  ]
+
+  public async push(e: EventMiddleware) {
+    return await this.trigger(e, {
+      response: Response.merge(CSResponse().DisconnectCsError)
+    })
+  }
+}
