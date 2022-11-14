@@ -1,0 +1,86 @@
+import { TriggerIntentPayload } from '@bahasa-ai/plugins-core-engine'
+import { CanceCsatAutoCloseAction } from '../../../Action/FCSAT/FCsatAutoclose'
+import { F7CloseFeedbackSession, SaveFeedbackAnswer } from '../../../Action/FCSAT/FFeedback'
+
+import LogEvent from '../../../Action/LogEvent'
+import { InitialIntent, PushIntent } from '../../../Bot'
+import Response from '../../../Util/Response'
+
+export class F6FeedbackAnswer extends InitialIntent {
+  static contextIn = [
+    'F6FeedbackSurvey'
+  ]
+
+  static parameter = {
+    userFeedback: {
+      entity: 'any'
+    }
+  }
+  static userExpression = [
+    {
+      sentence: 'mantab, balesnya cepet banget kak',
+      parameter: {
+        ['any']: '0,4'
+      }
+    },
+    {
+      sentence: 'ok',
+      parameter: {
+        ['any']: '0,0'
+      }
+    },
+    {
+      sentence: 'oke',
+      parameter: {
+        ['any']: '0,0'
+      }
+    },
+    {
+      sentence: 'sudah oke',
+      parameter: {
+        ['any']: '0,1'
+      }
+    }
+  ]
+
+  public actions() {
+    return this.run(LogEvent).run(SaveFeedbackAnswer).run(CanceCsatAutoCloseAction).run(F7CloseFeedbackSession)
+  }
+}
+
+export class F6AskFeedbackPush extends PushIntent {
+  static isContextReplaced = true
+  static contextOut = [
+    'F6FeedbackSurvey'
+  ]
+
+  public async push(event: EventMiddleware) {
+    return await this.trigger(event, {
+      response: Response.text([
+        'Silakan sampaikan saran dan masukan kamu untuk layanan Live Agent kami dalam satu kali kirim 😊'
+      ])
+    })
+  }
+
+  public async pushWithoutEvent(payload: TriggerIntentPayload) {
+    return await this.triggerWithoutEvent(payload, {
+      response: Response.text([
+        'Silakan sampaikan saran dan masukan kamu untuk layanan Live Agent kami dalam satu kali kirim 😊'
+      ])
+    })
+  }
+}
+
+export class F7AfterFillCSAT extends PushIntent {
+  static isContextReplaced = true
+  static contextOut = [
+  ]
+
+  public async push(event: EventMiddleware) {
+    return await this.trigger(event, {
+      response: Response.text([
+        `Terima kasih atas saran dan masukannya, sampai jumpa kembali ${event.user.name} 😊`
+      ])
+    })
+  }
+}

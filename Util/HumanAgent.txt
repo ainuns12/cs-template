@@ -1,0 +1,19 @@
+import { DatabaseTypes, QueryResult } from '@bahasa-ai/engine-database'
+import { CacheKeyUserDataByZendeskId, CacheKeyUserZendeskTicket, CACHE_TYPE_EX } from '../Util/CSHelper'
+import { Cache } from '../Service/Cache'
+import { ZendeskTicketCache } from '../Type/Zendesk'
+
+export async function SetUserTicketCacheData(userId: string, ticketId: number, tags: string[]) {
+  const cacheData: ZendeskTicketCache = { userId, tags }
+  // Cache will be deleted when ticket closed
+  await Cache.build().set(CacheKeyUserZendeskTicket(ticketId), cacheData)
+}
+
+export async function SetUserDataByZendeskId(ticketId: number, userData: QueryResult<DatabaseTypes.User>) {
+  // Cache will be deleted when ticket closed
+  await Cache.build().set(CacheKeyUserDataByZendeskId(ticketId), userData, CACHE_TYPE_EX, 60 * 60)
+}
+
+export async function DeletetUserTicketCacheData(ticketId: number) {
+  await Cache.build().del(CacheKeyUserZendeskTicket(ticketId))
+}

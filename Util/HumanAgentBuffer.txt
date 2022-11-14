@@ -1,0 +1,73 @@
+import { CACHE_TYPE_EX } from '../Util/CSHelper'
+import { Cache } from '../Service/Cache'
+import { CommentTicketParam } from '../Service/Zendesk'
+
+export class HumanAgentBuffer {
+  private static instance: HumanAgentBuffer
+
+  private mediaLimit = 3
+
+  static get get() {
+    if (!this.instance) {
+      this.instance = new HumanAgentBuffer()
+    }
+
+    return this.instance
+  }
+
+  private redisKey(sourceId: string, messageId: string, timestamp: number) {
+    return `{{ClientSlug}}:message_buffer:${sourceId}:${messageId}:${timestamp}`
+  }
+
+  private redisKeyAll(sourceId: string) {
+    return `{{ClientSlug}}:message_buffer:${sourceId}:*`
+  }
+
+  addMessage(sourceId: string, message: CommentTicketParam) {
+    return Cache.build().set(this.redisKey(sourceId, message.messageId, message.publishedAt.getTime()), message, CACHE_TYPE_EX, 3600)
+  }
+
+  async isMessageExist(sourceId: string) {
+    const messageKeys = await Cache.build().getKeys(this.redisKeyAll(sourceId))
+    if (messageKeys?.length) {
+      return true
+    }
+
+    return false
+  }
+
+  async getMessages(sourceId: string) {
+    const messageKeys = await Cache.build().getKeys(this.redisKeyAll(sourceId))
+    if (!messageKeys?.length) {
+      return []
+    }
+
+    messageKeys.sort((a, b) => {
+      const timestampA = parseInt(a.split(':').pop())
+      const timestampB = parseInt(b.split(':').pop())
+
+      return timestampA - timestampB
+    })
+
+    const messages: CommentTicketParam[] = []
+    let mediaCount = 0
+
+    for (const key of messageKeys) {
+      const message: CommentTicketParam = await Cache.build().get(key, true)
+      message.publishedAt = new Date(message.publishedAt)
+
+      messages.push(message)
+      if (message.media) {
+        mediaCount += 1
+      }
+
+      await Cache.build().del(key, true)
+
+      if (mediaCount >= this.mediaLimit) {
+        break
+      }
+    }
+
+    return messages
+  }
+}

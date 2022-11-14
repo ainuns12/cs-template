@@ -1,0 +1,32 @@
+import { addChatbotReminder } from '../../../Action/{{Action}}Middleware'
+import LogEvent from '../../../Action/LogEvent'
+import { FallbackIntent, PushIntent } from '../../../Bot'
+import Response from '../../../Util/Response'
+
+export class CancelTicketConfirmationFallbackPush extends PushIntent {
+  static isContextReplaced = true
+  static contextOut = [
+    'cCancelTicketConfirmation'
+  ]
+
+  public async push(e: EventMiddleware) {
+    return this.trigger(e, {
+      response: Response.text([
+        'Mohon maaf kami tidak mengerti yang kamu maksud 🙏',
+        'Silakan ketik *iya* untuk membatalkan atau ketik *tidak* untuk lanjut menghubungi bantuan'
+      ])
+    })
+  }
+}
+
+export class CancelTicketConfirmationFallback extends FallbackIntent {
+  static contextIn = [
+    'cCancelTicketConfirmation'
+  ]
+
+  public actions() {
+    return this.run(LogEvent).run(addChatbotReminder).run(async (e, _, __) => {
+      return await new CancelTicketConfirmationFallbackPush().push(e)
+    })
+  }
+}

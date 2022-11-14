@@ -1,0 +1,294 @@
+import Bull from 'bull'
+import { BullAdapter, setQueues } from 'bull-board'
+import { ZendeskBullType } from '../../Type/Zendesk'
+import { logger } from '../../Util/Logger'
+import { CommentTicketQueue, CancelTicketByUserQueue, TicketAutoCloseQueue, UpdateTagSolvedByAgentQueue, QueueEnabler, ChatbotSessionCreateTicketQueue, ChatbotSessionCommentTicketQueue, ChatbotSessionCloseTicketQueue, UpdateTicketCsatQueue, CreateTicketQueue } from './PreventiveQueue'
+import { QueueName } from '../../Util/CSHelper'
+import { HumanAgentLock } from '../../Util/HumanAgentLock'
+import { delay } from 'bluebird'
+import { HumanAgentBuffer } from '../../Util/HumanAgentBuffer'
+import { DatabaseTypes, QueryResult } from '@bahasa-ai/engine-database'
+import { jobLogger } from '../../Util/JobLogger'
+
+export class ZendeskBull {
+  private static instance: ZendeskBull
+
+  private createTicketQueue: Bull.Queue<ZendeskBullType.CreateTicketJob>
+  private commentTicketQueue: Bull.Queue<ZendeskBullType.CommentTicketJob>
+  private cancelTicketByUserQueue: Bull.Queue<ZendeskBullType.TicketSolvedJob>
+  private ticketAutoCloseQueue: Bull.Queue<ZendeskBullType.TicketSolvedJob>
+  private updateTagSolvedByAgentQueue: Bull.Queue<ZendeskBullType.TicketSolvedJob>
+  private updateCsatQueue: Bull.Queue<ZendeskBullType.UpdateTicketCsatJob>
+  private queueEnabler: Bull.Queue
+
+  // chatbot session ticket queue
+  private chatbotSessionCreateTicketQueue: Bull.Queue<ZendeskBullType.ChatbotSessionCreateTicketJob>
+  private chatbotSessionCommentTicketQueue: Bull.Queue<ZendeskBullType.ChatbotSessionCommentTicketJob>
+  private chatbotSessionCloseTicketQueue: Bull.Queue<ZendeskBullType.ChabotSessionBaseJob>
+
+  private queueEnablerJobId = 'queue_enabler'
+  private queueEnablerCron: string
+
+  private jobTimeout = 120 * 1000
+
+  constructor() {
+    // load cron config
+    this.queueEnablerCron = '*/1 * * * *'
+
+    const options: Bull.QueueOptions = {
+      redis: {
+        port: parseInt(process.env.REDIS_PORT) || 6379,
+        host: process.env.REDIS_HOST || '127.0.0.1',
+        password: process.env.REDIS_AUTH
+      }
+    }
+
+    this.createTicketQueue = new Bull(QueueName.CreateTicket, options)
+    this.commentTicketQueue = new Bull(QueueName.CommentTicket, options)
+    this.cancelTicketByUserQueue = new Bull(QueueName.CancelTicket, options)
+    this.ticketAutoCloseQueue = new Bull(QueueName.TicketAutoClose, options)
+    this.updateTagSolvedByAgentQueue = new Bull(QueueName.UpdateTagSolvedByAgent, options)
+    this.updateCsatQueue = new Bull(QueueName.UpdateCsat, options)
+
+    // queue enabler
+    this.queueEnabler = new Bull(QueueName.Enabler, options)
+
+    // chatbot session ticket queue
+    this.chatbotSessionCreateTicketQueue = new Bull(QueueName.ChatbotSessionCreateTicket, options)
+    this.chatbotSessionCommentTicketQueue = new Bull(QueueName.ChatbotSessionCommentTicket, options)
+    this.chatbotSessionCloseTicketQueue = new Bull(QueueName.ChatbotSessionCloseTicket, options)
+
+    this.createTicketQueue.process(parseInt(process.env.ZENDESK_BULL_MAX_WORKER) || 2, CreateTicketQueue)
+    this.commentTicketQueue.process(parseInt(process.env.ZENDESK_BULL_MAX_WORKER) || 2, CommentTicketQueue)
+    this.cancelTicketByUserQueue.process(parseInt(process.env.ZENDESK_BULL_MAX_WORKER) || 2, CancelTicketByUserQueue)
+    this.ticketAutoCloseQueue.process(parseInt(process.env.ZENDESK_BULL_MAX_WORKER) || 2, TicketAutoCloseQueue)
+    this.updateTagSolvedByAgentQueue.process(parseInt(process.env.ZENDESK_BULL_MAX_WORKER) || 2, UpdateTagSolvedByAgentQueue)
+    this.updateCsatQueue.process(parseInt(process.env.ZENDESK_BULL_MAX_WORKER) || 2, UpdateTicketCsatQueue)
+
+    // queue enabler
+    this.queueEnabler.process(1, QueueEnabler)
+    this.initQueueEnabler().catch(error => {
+      throw error
+    })
+    // chatbot session ticket queue
+    this.chatbotSessionCreateTicketQueue.process(parseInt(process.env.ZENDESK_BULL_MAX_WORKER) || 2, ChatbotSessionCreateTicketQueue)
+    this.chatbotSessionCommentTicketQueue.process(parseInt(process.env.ZENDESK_BULL_MAX_WORKER) || 2, ChatbotSessionCommentTicketQueue)
+    this.chatbotSessionCloseTicketQueue.process(parseInt(process.env.ZENDESK_BULL_MAX_WORKER) || 2, ChatbotSessionCloseTicketQueue)
+
+    setQueues([
+      new BullAdapter(this.createTicketQueue),
+      new BullAdapter(this.commentTicketQueue),
+      new BullAdapter(this.cancelTicketByUserQueue),
+      new BullAdapter(this.ticketAutoCloseQueue),
+      new BullAdapter(this.updateTagSolvedByAgentQueue),
+      new BullAdapter(this.queueEnabler),
+      new BullAdapter(this.chatbotSessionCreateTicketQueue),
+      new BullAdapter(this.chatbotSessionCommentTicketQueue),
+      new BullAdapter(this.chatbotSessionCloseTicketQueue),
+      new BullAdapter(this.updateCsatQueue)
+    ])
+
+    jobLogger(this.createTicketQueue)
+    jobLogger(this.commentTicketQueue)
+    jobLogger(this.cancelTicketByUserQueue)
+    jobLogger(this.ticketAutoCloseQueue)
+    jobLogger(this.updateTagSolvedByAgentQueue)
+    jobLogger(this.queueEnabler)
+    jobLogger(this.chatbotSessionCreateTicketQueue)
+    jobLogger(this.chatbotSessionCommentTicketQueue)
+    jobLogger(this.chatbotSessionCloseTicketQueue)
+    jobLogger(this.updateCsatQueue)
+
+    // listen create ticket & comment ticket done
+    this.createTicketQueue.on('completed', async (job) => {
+      await this.checkMessageBuffer(job.data.user)
+    })
+
+    this.commentTicketQueue.on('completed', async (job) => {
+      await this.checkMessageBuffer(job.data.user)
+    })
+  }
+
+  static getInstance() {
+    if (!this.instance) {
+      this.instance = new ZendeskBull()
+    }
+
+    return this.instance
+  }
+
+  async initQueueEnabler() {
+    const job = await this.queueEnabler.getJob(this.queueEnablerJobId)
+    if (job) {
+      console.log(job)
+      await job.remove()
+    }
+
+    this.queueEnabler.add(null, {
+      repeat: {
+        cron: this.queueEnablerCron
+      },
+      jobId: this.queueEnablerJobId,
+      removeOnComplete: true
+    })
+  }
+
+  async createTicket(param: ZendeskBullType.CreateTicketJob, delayInSecond?: number) {
+    await HumanAgentLock.get.lockUser(param.user.sourceId)
+    const currentJob = await this.createTicketQueue.getJob(param.user.sourceId)
+    if (currentJob) {
+      await currentJob.remove()
+    }
+
+    if (delayInSecond) {
+      return this.createTicketQueue.add(param, { jobId: param.user.sourceId, removeOnComplete: true, timeout: this.jobTimeout, delay: delayInSecond * 1000 })
+    }
+
+    return this.createTicketQueue.add(param, { jobId: param.user.sourceId, removeOnComplete: true, timeout: this.jobTimeout, delay: 1000 })
+  }
+
+  async commentTicket(param: ZendeskBullType.CommentTicketJob, delayInSecond?: number) {
+    await HumanAgentLock.get.lockUser(param.user.sourceId)
+    const currentJob = await this.commentTicketQueue.getJob(param.user.sourceId)
+    console.log('Is current Job', param.user.sourceId, JSON.stringify(currentJob))
+    if (currentJob) {
+      await currentJob.remove()
+      await delay(10)
+    }
+
+    if (delayInSecond) {
+      return this.commentTicketQueue.add(param, { jobId: param.user.sourceId, removeOnComplete: true, timeout: this.jobTimeout, delay: delayInSecond * 1000 })
+    }
+
+    return this.commentTicketQueue.add(param, { jobId: param.user.sourceId, removeOnComplete: true, timeout: this.jobTimeout, delay: 2000 })
+  }
+
+  // checking message buffer
+  private async checkMessageBuffer(user: QueryResult<DatabaseTypes.User>) {
+    console.log('Create / Comment ticket job completed', user.sourceId)
+    // check message buffer
+    const isBufferExist = await HumanAgentBuffer.get.isMessageExist(user.sourceId)
+    console.log('Buffer exist', isBufferExist)
+    if (isBufferExist) {
+      await ZendeskBull.getInstance().commentTicket({
+        user
+      })
+    } else {
+      // release lock
+      await HumanAgentLock.get.releaseLock(user.sourceId)
+    }
+  }
+
+  async cancelTicketByUser(param: ZendeskBullType.TicketSolvedJob, delayInSecond?: number) {
+    if (delayInSecond) {
+      return this.cancelTicketByUserQueue.add(param, { removeOnComplete: true, timeout: this.jobTimeout, delay: delayInSecond * 1000 })
+    }
+    return this.cancelTicketByUserQueue.add(param, { removeOnComplete: true, timeout: this.jobTimeout })
+  }
+
+  async ticketAutoClose(param: ZendeskBullType.TicketSolvedJob, delayInSecond?: number) {
+    if (delayInSecond) {
+      return this.ticketAutoCloseQueue.add(param, { removeOnComplete: true, timeout: this.jobTimeout, delay: delayInSecond * 1000 })
+    }
+    return this.ticketAutoCloseQueue.add(param, { removeOnComplete: true, timeout: this.jobTimeout })
+  }
+
+  async updateTagSolvedByAgent(param: ZendeskBullType.TicketSolvedJob, delayInSecond?: number) {
+    if (delayInSecond) {
+      return this.updateTagSolvedByAgentQueue.add(param, { removeOnComplete: true, timeout: this.jobTimeout, delay: delayInSecond * 1000 })
+    }
+    return this.updateTagSolvedByAgentQueue.add(param, { removeOnComplete: true, timeout: this.jobTimeout })
+  }
+
+  async updateTicketCsat(param: ZendeskBullType.UpdateTicketCsatJob, delayInSecond?: number) {
+    if (delayInSecond) {
+      return this.updateCsatQueue.add(param, { removeOnComplete: true, timeout: this.jobTimeout, delay: delayInSecond * 1000 })
+    }
+    return this.updateCsatQueue.add(param, { removeOnComplete: true, timeout: this.jobTimeout })
+  }
+
+  async chatbotSessionCreateTicket(param: ZendeskBullType.ChatbotSessionCreateTicketJob, delayInSecond?: number) {
+    if (delayInSecond) {
+      return this.chatbotSessionCreateTicketQueue.add(param, { removeOnComplete: true, timeout: this.jobTimeout, delay: delayInSecond * 1000 })
+    }
+    return this.chatbotSessionCreateTicketQueue.add(param, { removeOnComplete: true, timeout: this.jobTimeout })
+  }
+
+  async chatbotSessionCommentTicket(param: ZendeskBullType.ChatbotSessionCommentTicketJob, delayInSecond?: number) {
+    if (delayInSecond) {
+      return this.chatbotSessionCommentTicketQueue.add(param, { removeOnComplete: true, timeout: this.jobTimeout, delay: delayInSecond * 1000 })
+    }
+    return this.chatbotSessionCommentTicketQueue.add(param, { removeOnComplete: true, timeout: this.jobTimeout })
+  }
+
+  async chatbotSessionCloseTicket(param: ZendeskBullType.ChabotSessionBaseJob, delayInSecond?: number) {
+    if (delayInSecond) {
+      return this.chatbotSessionCloseTicketQueue.add(param, { removeOnComplete: true, timeout: this.jobTimeout, delay: delayInSecond * 1000 })
+    }
+    return this.chatbotSessionCloseTicketQueue.add(param, { removeOnComplete: true, timeout: this.jobTimeout })
+  }
+
+  async pauseQueue() {
+    await this.createTicketQueue.pause()
+    await this.commentTicketQueue.pause()
+    await this.cancelTicketByUserQueue.pause()
+    await this.ticketAutoCloseQueue.pause()
+    await this.updateTagSolvedByAgentQueue.pause()
+
+    await this.chatbotSessionCreateTicketQueue.pause()
+    await this.chatbotSessionCommentTicketQueue.pause()
+    await this.chatbotSessionCloseTicketQueue.pause()
+    logger.debug('Zendesk Queue Paused')
+  }
+
+  async resumeQueue() {
+    const createTicketQueuePaused = await this.commentTicketQueue.isPaused()
+    const commentTicketQueuePaused = await this.commentTicketQueue.isPaused()
+    const cancelTicketByUserQueuePaused = await this.cancelTicketByUserQueue.isPaused()
+    const ticketAutoCloseQueuePaused = await this.ticketAutoCloseQueue.isPaused()
+    const updateTagSolvedByAgentPaused = await this.updateTagSolvedByAgentQueue.isPaused()
+    const chatbotSessionCreateTicketPaused = await this.chatbotSessionCreateTicketQueue.isPaused()
+    const chatbotSessionCommentTicketPaused = await this.chatbotSessionCommentTicketQueue.isPaused()
+    const chatbotSessionCloseTicketPaused = await this.chatbotSessionCloseTicketQueue.isPaused()
+
+    if (createTicketQueuePaused) {
+      await this.createTicketQueue.resume()
+      logger.debug('createTicketQueue running')
+    }
+
+    if (commentTicketQueuePaused) {
+      await this.commentTicketQueue.resume()
+      logger.debug('commentTicketQueue running')
+    }
+
+    if (cancelTicketByUserQueuePaused) {
+      await this.cancelTicketByUserQueue.resume()
+      logger.debug('cancelTicketByUserQueue running')
+    }
+
+    if (ticketAutoCloseQueuePaused) {
+      await this.ticketAutoCloseQueue.resume()
+      logger.debug('ticketAutoCloseQueue running')
+    }
+
+    if (updateTagSolvedByAgentPaused) {
+      await this.updateTagSolvedByAgentQueue.resume()
+      logger.debug('updateTagSolvedByAgent running')
+    }
+
+    if (chatbotSessionCreateTicketPaused) {
+      await this.chatbotSessionCreateTicketQueue.resume()
+      logger.debug('chatbotSessionCreateTicketQueue running')
+    }
+
+    if (chatbotSessionCommentTicketPaused) {
+      await this.chatbotSessionCommentTicketQueue.resume()
+      logger.debug('chatbotSessionCommentTicketQueue running')
+    }
+
+    if (chatbotSessionCloseTicketPaused) {
+      await this.chatbotSessionCloseTicketQueue.resume()
+      logger.debug('chatbotSessionCloseTicketQueue running')
+    }
+  }
+}

@@ -1,0 +1,2 @@
+    zendeskRequesterId?: number,
+    lastSessionId?: string,

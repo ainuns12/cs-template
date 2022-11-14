@@ -1,0 +1,31 @@
+import { EngineBull } from '../../Service/HumanAgentBull/Main'
+
+export const AddCsatAutocloseAction = async (event: EventMiddleware, data: DataMiddleware, next: StoryNextFunction) => {
+  const isJobExist = await EngineBull.getInstance().cancelCsatAutoCloseQueue(event.integration, event.sourceId)
+
+  if (isJobExist) {
+    await EngineBull.getInstance().addCsatAutoCloseQueue({
+      agentId: event.agentId,
+      integration: event.integration,
+      sessionId: event.sessionId,
+      sourceId: event.sourceId,
+      handledBy: isJobExist.data.handledBy
+    })
+  } else {
+    await EngineBull.getInstance().addCsatAutoCloseQueue({
+      agentId: event.agentId,
+      integration: event.integration,
+      sessionId: event.sessionId,
+      sourceId: event.sourceId,
+      handledBy: 'bot'
+    })
+  }
+
+  return next(event, data)
+}
+
+export const CanceCsatAutoCloseAction = async (event: EventMiddleware, data: DataMiddleware, next: StoryNextFunction) => {
+  await EngineBull.getInstance().cancelCsatAutoCloseQueue(event.integration, event.sourceId)
+
+  return next(event, data)
+}

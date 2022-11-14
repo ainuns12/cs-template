@@ -1,0 +1,52 @@
+import { Column, Entity, PrimaryColumn } from 'typeorm'
+
+export type MessagesType = {
+  type: string,
+  text: string,
+  url?: string
+}
+
+@Entity()
+export class Message {
+  @PrimaryColumn()
+  public id: string
+
+  @Column({ name: 'session_id' })
+  public sessionId: string
+
+  @PrimaryColumn()
+  public from: string
+
+  @Column({ name: 'conversation_design_id' })
+  public conversationDesignId: string
+
+  @Column()
+  public integration: string
+
+  @Column({ name: 'agent_id' })
+  public agentId: string
+
+  @Column()
+  public message: string
+
+  @Column('json', { array: true })
+  public messages: MessagesType[]
+
+  @Column({ name: 'is_human_fallback' })
+  public isHumanFallback: boolean
+
+  @Column('varchar', { array: true })
+  public intent: string[]
+
+  @Column({ name: 'source_id' })
+  public sourceId: string
+
+  @Column()
+  public publishedAt: Date
+
+  @Column()
+  public readonly createdAt: Date
+
+  @Column()
+  public readonly updatedAt: Date
+}

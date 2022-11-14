@@ -1,0 +1,68 @@
+import { database } from '@bahasa-ai/engine-database'
+import * as Bull from 'bull'
+import { CsatTimeoutPush } from '../../Bot/CSAT/F9CsatTimeout/Main'
+
+import { HumanAgentBullType } from '../../Type/HumanAgentBull'
+import { forceSessionExpired } from '../../Util/BotToolkit'
+import { logger } from '../../Util/Logger'
+import { ChatbotSessionService } from '../ChatbotSessionService'
+
+export async function CsatAutoclose(job: Bull.Job<HumanAgentBullType.CsatAutoClose>, done: () => void) {
+  if (!job.data) {
+    return done()
+  }
+
+  const users = await database().User.get({
+    sourceId: { $eq: job.data.sourceId },
+    integration: { $eq: job.data.integration },
+    agentId: { $eq: job.data.agentId }
+  })
+  if (!users.length) {
+    return done()
+  }
+
+  await new CsatTimeoutPush().pushWithoutEvent({
+    agentId: job.data.agentId,
+    intentSlug: 'CsatTimeoutPush',
+    sourceId: job.data.sourceId,
+    integration: job.data.integration as any,
+    isHumanFallback: false,
+  })
+
+  const STMs = await database().STM.get({
+    sourceId: { $eq: job.data.sourceId },
+    integration: { $eq: job.data.integration },
+    agentId: { $eq: job.data.agentId },
+    sessionId: { $eq: job.data.sessionId }
+  })
+  if (!STMs.length) {
+    // expire session
+    await forceSessionExpired(job.data.sessionId)
+    return done()
+  }
+
+  const STM = STMs[0]
+
+  logger.debug(`[ChatbotSession ${job.data.sessionId}] STM Result with id ${STM.id} with data %j`, STM)
+  const { csatScore, ticketFeedback } = STM.memory as MemorySTM
+  const tags = []
+
+
+  await ChatbotSessionService.build().insertSession({
+    sessionId: job.data.sessionId,
+    sourceId: job.data.sourceId,
+    integration: job.data.integration,
+    agentId: job.data.agentId,
+    handledBy: job.data.handledBy,
+    csat: csatScore ? csatScore : 'offered',
+    feedback: ticketFeedback ? ticketFeedback : '',
+    uploadZendeskStatus: 'not-uploaded',
+    createdAt: new Date(),
+    tags
+  })
+
+  // expire session
+  await forceSessionExpired(job.data.sessionId)
+
+  return done()
+}

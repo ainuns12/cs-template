@@ -1,0 +1,38 @@
+import { F3AskSurveyPush } from '../../Bot/CSAT/F3Survey/Main'
+import { EngineBull } from '../../Service/HumanAgentBull/Main'
+import { closingResponse } from '../../Util/CSHelper'
+
+export const F1ChatbotSessionCloseAction = async (event: EventMiddleware, data: DataMiddleware, next: StoryNextFunction) => {
+  // const stm = await data.STM.memory
+  // const ltm = await data.LTM.memory
+
+  const userConfirmation = event.intent.parameter.userConfirmation as string
+
+  if (userConfirmation === 'no') {
+    // close session
+    await new F3AskSurveyPush().pushWithoutEvent({
+      agentId: event.agentId,
+      intentSlug: 'F3AskSurveyPush',
+      sourceId: event.sourceId,
+      integration: event.integration as any,
+      isHumanFallback: false
+    }, closingResponse())
+
+    // clear job
+    await EngineBull.getInstance().cancelChatbotCloseSessionQueue(event.integration, event.sourceId)
+
+    // csat autoclose
+    await EngineBull.getInstance().addCsatAutoCloseQueue({
+      agentId: event.agentId,
+      integration: event.integration,
+      sessionId: event.sessionId,
+      sourceId: event.sourceId,
+      handledBy: 'bot'
+    })
+
+  } else {
+    // @TODO: keep session open, some feedback maybe?
+  }
+
+  return next(event, data)
+}

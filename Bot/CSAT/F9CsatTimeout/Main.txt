@@ -1,0 +1,15 @@
+import { TriggerIntentPayload } from '@bahasa-ai/plugins-core-engine'
+import { PushIntent } from '../../../Bot'
+import Response from '../../../Util/Response'
+
+export class CsatTimeoutPush extends PushIntent {
+  static isContextReplaced = true
+
+  public async pushWithoutEvent(payload: TriggerIntentPayload) {
+    return this.triggerWithoutEvent(payload, {
+      response: Response.text([
+        ['Terima kasih sudah menghubungi Live Agent dan mempercayakan masalah kamu ke tim CS Kami 😊'].join('\n')
+      ])
+    })
+  }
+}

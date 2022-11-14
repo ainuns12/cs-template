@@ -1,0 +1,37 @@
+import { Connection, createConnection } from 'typeorm'
+import { Message } from './Entity/Message'
+
+export class AnalyticsDB {
+  private static instance: AnalyticsDB
+
+  private constructor(private connection: Connection) {}
+
+  public static async connect() {
+    if (!AnalyticsDB.instance) {
+      AnalyticsDB.instance = new AnalyticsDB(await createConnection({
+        name: 'bot_db',
+        type: 'postgres',
+        host: process.env.ANALYTICS_DB_HOST,
+        database: process.env.ANALYTICS_DB_NAME,
+        password: process.env.ANALYTICS_DB_PASSWORD,
+        port: Number(process.env.ANALYTICS_DB_PORT) || 5432,
+        username: process.env.ANALYTICS_DB_USERNAME,
+        ssl: process.env.ANALYTICS_DB_USE_SSL === 'true' ? true : false,
+        /** DO NOT SET `synchronize` TO TRUE */
+        synchronize: false,
+        logging: process.env.ENVIRONMENT === 'develop' || process.env.ENVIRONMENT === 'local',
+        entities: [
+          Message
+        ]
+      }))
+    }
+    return AnalyticsDB.instance
+  }
+
+  public static get get(): Connection {
+    if (!AnalyticsDB.instance?.connection) {
+      throw new Error('Please init DB first')
+    }
+    return AnalyticsDB.instance.connection
+  }
+}

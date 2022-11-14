@@ -1,0 +1,90 @@
+import { DatabaseTypes, QueryResult } from '@bahasa-ai/engine-database'
+import { CommentTicketParam, CreateTicketType, ZendeskSatisfactionScoreType } from '../Service/Zendesk'
+
+export namespace ZendeskBullType {
+  export type CreateTicketJob = {
+    sessionId: string,
+    user: QueryResult<DatabaseTypes.User>,
+    createTicketParam: {
+      integration: string,
+      sourceId: string,
+      user: { name: string },
+      tags: string[],
+      zendeskRequesterId: number
+    }
+  }
+
+  export type CommentTicketJob = {
+    user: QueryResult<DatabaseTypes.User>,
+    messages?: CommentTicketParam[]
+  }
+
+  export type TicketSolvedJob = {
+    user: QueryResult<DatabaseTypes.User>,
+    tags: string[]
+  }
+
+  export type UpdateTicketCsatJob = {
+    ticketId: number,
+    requesterId: number,
+    satisfactionScore: ZendeskSatisfactionScoreType,
+    comment?: string
+  }
+
+  export type ChabotSessionBaseJob = {
+    sessionId: string,
+    sourceId: string,
+    integration: string,
+    agentId: string,
+    user: QueryResult<DatabaseTypes.User>,
+    tags: string[]
+  }
+
+  export type ChatbotSessionCreateTicketJob = ChabotSessionBaseJob & {
+    param: CreateTicketType
+  }
+
+  export type ChatbotSessionCommentTicketJob = ChabotSessionBaseJob & {
+    sentBy: 'bot' | 'user',
+    message: CommentTicketParam
+  }
+}
+
+
+export type ZendeskTicketCache = {
+  userId: string,
+  tags: string[]
+}
+
+
+export namespace ZendeskIris {
+  export type ZendeskTicketStatus = 'New' | 'Open' | 'Pending' | 'Tertunda' | 'Hold' | 'Ditahan' | 'Solved' | 'Closed' | 'Baru' | 'Buka' | 'Selesai'
+
+  export type ZendeskWebhook = {
+    id: number,
+    status: ZendeskTicketStatus,
+    isFirstChat: boolean,
+    assignee: {
+      name?: string
+    },
+    latestComment: {
+      id: number,
+      value: string,
+      attachments?: string,
+      user: {
+        name: string,
+        role: 'Admin' | 'Agent' | 'End-user'
+      }
+    },
+    tags?: string
+  }
+
+  export type ZendeskCommentType = 'text' | 'image' | 'document' | 'video'
+
+  export type ZendeskComment = {
+    type: ZendeskCommentType,
+    content: string,
+    caption?: string
+  }
+
+}

@@ -1,0 +1,469 @@
+import * as Bull from 'bull'
+import * as Sentry from '@sentry/node'
+
+import { ZendeskBullType } from '../../Type/Zendesk'
+import { ZendeskService } from '../Zendesk'
+import { ZendeskBull } from './Main'
+import { database, DatabaseTypes, QueryResult } from '@bahasa-ai/engine-database'
+import { Cache } from '../Cache'
+import { CacheKeyChatbotSessionZendeskComment } from '../../Util/CSHelper'
+import { ChabtotSessionReportType } from '../../Type/ChatbotSessionReport'
+import { ChatbotSessionService } from '../ChatbotSessionService'
+import { logger } from '../../Util/Logger'
+import { IsWorkingHour } from '../../Util/WorkingHour'
+import { PushHumanAgentResponse } from '../../Bot/{{Action}}/Main'
+import Response from '../../Util/Response'
+import { AskUserToWaitHumanAgent, OutsideWorkHourResponse } from '../../Util/CSHelper'
+import { HumanAgentBuffer } from '../../Util/HumanAgentBuffer'
+import { HumanAgentLock } from '../../Util/HumanAgentLock'
+import { MessageHistoryService } from '../MessageHistoryService'
+
+export async function CreateTicketQueue(job: Bull.Job<ZendeskBullType.CreateTicketJob>, done: Bull.DoneCallback) {
+  try {
+    const { user, createTicketParam, sessionId, } = job.data
+    const createTicketResult = await ZendeskService.getInstance().createTicket(createTicketParam)
+
+    // retry create ticket
+    if (createTicketResult?.status == 429) {
+      console.log('Too many requests: %j', { header: createTicketResult.headers, data: createTicketResult.data })
+      console.log('Retry after: %j', createTicketResult?.headers['retry-after'])
+
+      // TODO: re queue
+      const strRetryAfter = createTicketResult?.headers['retry-after']
+      if (strRetryAfter) {
+        await ZendeskBull.getInstance().createTicket(job.data, parseInt(strRetryAfter))
+      }
+      return done()
+    }
+    if (createTicketResult?.status >= 400) {
+      return done()
+    }
+
+    const LTMs = await database().LTM.get({
+      agentId: { $eq: user.agentId },
+      integration: { $eq: user.integration },
+      sourceId: { $eq: user.sourceId }
+    })
+    const LTM = LTMs[0]
+
+    if (!createTicketParam.zendeskRequesterId) {
+      console.log(`New user detected, saving requester_id ${createTicketResult.data.ticket.requester_id} to LTM`)
+      await database().LTM.updateById(LTM._id, {
+        memory: {
+          ...LTM.memory,
+          zendeskRequesterId: createTicketResult.data.ticket.requester_id
+        }
+      })
+    }
+
+    // locking from PIWA
+    await database().User.updateById(user._id, {
+      userData: {
+        ...user.userData,
+        platform: 'zendesk',
+        isInHumanFallback: true,
+        zendeskTicketId: createTicketResult.data.ticket.id,
+        requesterId: createTicketResult.data.ticket.requester_id
+      }
+    })
+
+    const STMs = await database().STM.get({ sessionId: { $eq: sessionId } })
+    const STM: QueryResult<DatabaseTypes.STM<MemorySTM>> = STMs[0]
+    // @TODO: PRODUCTIZE THIS! Incoming many zendesk integration from pak jono
+    // patch STM ticketNumber
+    console.log('UPDAETING TICKET NUMBER: ', createTicketResult.data)
+    await database().STM.updateById(STM._id, {
+      memory: {
+        ...STM.memory,
+        faqData: null,
+        ticketNumber: createTicketResult.data.ticket.id
+      }
+    })
+
+    if (!IsWorkingHour()) {
+      await new PushHumanAgentResponse().pushWithoutEvent({
+        agentId: user.agentId,
+        intentSlug: 'PushHumanAgentResponse',
+        sourceId: user.sourceId,
+        integration: user.integration as any
+      }, Response.text([
+        OutsideWorkHourResponse(user.userData.name)
+      ]))
+    } else {
+      await new PushHumanAgentResponse().pushWithoutEvent({
+        agentId: user.agentId,
+        intentSlug: 'PushHumanAgentResponse',
+        sourceId: user.sourceId,
+        integration: user.integration as any
+      }, Response.text([
+        AskUserToWaitHumanAgent()
+      ]))
+    }
+
+    // send all messages from user in the current session
+    const msgRaw = await MessageHistoryService.build().messageBySession(LTM.lastSessionId)
+    const msgArr: string[] = []
+    for (const item of msgRaw) {
+      if (!item.message || !item.message.length) {
+        continue
+      }
+
+      msgArr.push(`${item.from === user.sourceId ? user.userData.name : 'Bot'} : ${item.message}`)
+    }
+    const msg = msgArr.join('\n')
+
+    const comment = [{ // use msgId from first data
+      messageId: msgRaw[0].id,
+      query: msg,
+      publishedAt: msgRaw[0].createdAt
+    }]
+
+    // update current user variable data
+    user.userData.platform = 'zendesk',
+      user.userData.isInHumanFallback = true,
+      user.userData.zendeskTicketId = createTicketResult.data.ticket.id,
+      user.userData.requesterId = createTicketResult.data.ticket.requester_id,
+      user.userData.zendeskTicketTags = createTicketResult.data.ticket.tags || []
+
+    await ZendeskBull.getInstance().commentTicket({
+      user,
+      messages: comment
+    })
+
+    return done()
+  } catch (error) {
+    await HumanAgentLock.get.releaseLock(job.data.user.sourceId)
+    console.error(error)
+    Sentry.captureException(error)
+    job.moveToFailed({ message: error.message })
+    return done()
+  }
+}
+
+export async function CommentTicketQueue(job: Bull.Job<ZendeskBullType.CommentTicketJob>, done: Bull.DoneCallback) {
+  try {
+    const { user } = job.data
+    let { messages } = job.data
+
+    if (!messages) {
+      const bufferMessages = await HumanAgentBuffer.get.getMessages(user.sourceId)
+
+      messages = bufferMessages
+    }
+
+    if (!messages || !messages.length) {
+      await HumanAgentLock.get.releaseLock(user.sourceId)
+      return done()
+    }
+
+    const result = await ZendeskService.getInstance().commentTicket(user, messages)
+
+    const strRetryAfter = result?.headers['retry-after']
+    if (result?.status == 429 && strRetryAfter) {
+      await ZendeskBull.getInstance().commentTicket(job.data, parseInt(strRetryAfter))
+
+      return done()
+    }
+
+    validateRequestLimit(result.headers)
+
+    return done()
+  } catch (error) {
+    await HumanAgentLock.get.releaseLock(job.data.user.sourceId)
+    console.error(error)
+    Sentry.captureException(error)
+    job.moveToFailed({ message: error.message })
+  }
+}
+
+export async function CancelTicketByUserQueue(job: Bull.Job<ZendeskBullType.TicketSolvedJob>, done: () => void) {
+  try {
+    const result = await ZendeskService.getInstance().cancelTicketByUser(job.data.user, job.data.tags)
+
+    const strRetryAfter = result?.headers['retry-after']
+    if (result?.status == 429 && strRetryAfter) {
+      await ZendeskBull.getInstance().cancelTicketByUser(job.data, parseInt(strRetryAfter))
+    }
+
+    validateRequestLimit(result.headers)
+    return done()
+  } catch (error) {
+    console.error(error)
+    Sentry.captureException(error)
+    job.moveToFailed({ message: error.message })
+  }
+}
+
+export async function TicketAutoCloseQueue(job: Bull.Job<ZendeskBullType.TicketSolvedJob>, done: () => void) {
+  try {
+    const result = await ZendeskService.getInstance().ticketAutoClose(job.data.user, job.data.tags)
+
+    const strRetryAfter = result?.headers['retry-after']
+    if (result?.status == 429 && strRetryAfter) {
+      await ZendeskBull.getInstance().ticketAutoClose(job.data, parseInt(strRetryAfter))
+    }
+
+    validateRequestLimit(result.headers)
+
+    return done()
+  } catch (error) {
+    console.error(error)
+    Sentry.captureException(error)
+    job.moveToFailed({ message: error.message })
+  }
+}
+
+export async function UpdateTagSolvedByAgentQueue(job: Bull.Job<ZendeskBullType.TicketSolvedJob>, done: () => void) {
+  try {
+    const result = await ZendeskService.getInstance().updateTagSolvedByAgent(job.data.user, job.data.tags)
+
+    const strRetryAfter = result?.headers['retry-after']
+    if (result?.status == 429 && strRetryAfter) {
+      await ZendeskBull.getInstance().updateTagSolvedByAgent(job.data, parseInt(strRetryAfter))
+    }
+
+    validateRequestLimit(result.headers)
+
+    return done()
+  } catch (error) {
+    console.error(error)
+    Sentry.captureException(error)
+    job.moveToFailed({ message: error.message })
+  }
+}
+
+export async function QueueEnabler(job: Bull.Job, done: () => void) {
+  try {
+    await ZendeskBull.getInstance().resumeQueue()
+    done()
+  } catch (error) {
+    console.error(error)
+    Sentry.captureException(error)
+    job.moveToFailed({ message: error.message })
+  }
+}
+
+async function validateRequestLimit(headers: any) {
+  const limit = parseInt(headers['x-rate-limit-remaining'])
+  if (!limit) {
+    return
+  }
+
+  const limitTreshold = parseInt(process.env.ZENDESK_LIMIT_TRESHOLD) || 30
+  if (limit < limitTreshold) {
+    Sentry.captureEvent({
+      event_id: 'zendesk_limit_treshold_reached',
+      message: `Current limit ${limit} with trashold ${limitTreshold}. Queue paused.`
+    })
+    // pause queue
+    await ZendeskBull.getInstance().pauseQueue()
+  }
+}
+
+// Chatbot session zendesk queue
+export async function ChatbotSessionCreateTicketQueue(job: Bull.Job<ZendeskBullType.ChatbotSessionCreateTicketJob>, done: () => void) {
+  try {
+    logger.debug(`[ChatbotSession ${job.data.param.sourceId}] creating ticket`)
+    const result = await ZendeskService.getInstance().createTicket(job.data.param)
+
+    logger.debug(`[ChatbotSession ${job.data.param.sourceId}] creating ticket result ${JSON.stringify(result?.data)}`)
+    const strRetryAfter = result?.headers['retry-after']
+    // retry
+    if (result?.status == 429 && strRetryAfter) {
+      await ZendeskBull.getInstance().chatbotSessionCreateTicket(job.data, parseInt(strRetryAfter))
+      return done()
+    }
+    if (result?.status >= 400) {
+
+      return done()
+    }
+
+    await ChatbotSessionService.build().updateZendeskTicket(job.data.sessionId, result.data.ticket.id)
+
+    // store zendeskTicketId and requester id to user
+    job.data.user.userData = {
+      ...job.data.user.userData,
+      requesterId: result.data.ticket.requester_id,
+      zendeskTicketId: result.data.ticket.id
+    }
+
+    await database().User.updateById(job.data.user._id, {
+      userData: job.data.user.userData
+    })
+
+    // store requester id if not exist
+    if (!job.data.param.zendeskRequesterId) {
+      const LTMs = await database().LTM.get({ integration: { $eq: job.data.integration }, agentId: { $eq: job.data.agentId }, sourceId: { $eq: job.data.sourceId } })
+      if (!LTMs.length) {
+        return
+      }
+      const LTM = LTMs[0]
+
+      await database().LTM.updateById(LTM._id, {
+        memory: {
+          ...LTM.memory,
+          zendeskRequesterId: result.data.ticket.requester_id
+        }
+      })
+    }
+
+    // start insert comment
+    await insertChatbotSessionNextComment({
+      user: job.data.user,
+      sessionId: job.data.sessionId,
+      sourceId: job.data.sourceId,
+      integration: job.data.integration,
+      agentId: job.data.agentId,
+      tags: job.data.tags
+    })
+
+    validateRequestLimit(result.headers)
+
+    return done()
+  } catch (error) {
+    console.error(error)
+    await ChatbotSessionService.build().sessionUploadError(job.data.sessionId)
+    Sentry.captureException(error)
+    await job.moveToFailed({ message: error.message })
+    return done()
+
+  }
+}
+
+export async function ChatbotSessionCommentTicketQueue(job: Bull.Job<ZendeskBullType.ChatbotSessionCommentTicketJob>, done: () => void) {
+  try {
+    logger.debug(`[ChatbotSession ${job.data.sourceId}] inserting message ${JSON.stringify(job.data.message)}`)
+    const result = await ZendeskService.getInstance().commentTicket(job.data.user, [job.data.message], job.data.sentBy)
+    logger.debug(`[ChatbotSession ${job.data.sourceId}] inserting result ${JSON.stringify(result?.data)}`)
+
+    const strRetryAfter = result?.headers['retry-after']
+    if (result?.status == 429 && strRetryAfter) {
+      await ZendeskBull.getInstance().chatbotSessionCommentTicket(job.data, parseInt(strRetryAfter))
+      return done()
+    }
+
+    validateRequestLimit(result.headers)
+
+    // get next comment
+    await insertChatbotSessionNextComment({
+      user: job.data.user,
+      sessionId: job.data.sessionId,
+      sourceId: job.data.sourceId,
+      integration: job.data.integration,
+      agentId: job.data.agentId,
+      tags: job.data.tags
+    })
+
+    return done()
+  } catch (error) {
+    console.error(error)
+    job.data.message = {
+      query: `Failed to upload message: ${error.message}`,
+      publishedAt: job.data.message.publishedAt,
+      messageId: job.data.message.messageId
+    }
+    await ZendeskBull.getInstance().chatbotSessionCommentTicket(job.data)
+    Sentry.captureException(error)
+    job.moveToFailed({ message: error.message })
+  }
+}
+
+async function insertChatbotSessionNextComment(param: ZendeskBullType.ChabotSessionBaseJob) {
+  const cachedComments: ChabtotSessionReportType.ChatbotSessionMessage[] = await Cache.build().get(CacheKeyChatbotSessionZendeskComment(param.sessionId))
+  if (!cachedComments) {
+    await ZendeskBull.getInstance().chatbotSessionCloseTicket(param)
+    await await Cache.build().del(CacheKeyChatbotSessionZendeskComment(param.sessionId))
+    return
+  }
+
+  // close chatbot session ticket
+  if (!cachedComments.length) {
+    await ZendeskBull.getInstance().chatbotSessionCloseTicket(param)
+    await await Cache.build().del(CacheKeyChatbotSessionZendeskComment(param.sessionId))
+    return
+  }
+
+  logger.debug(`[ChatbotSession ${param.sourceId}] current message ${JSON.stringify(cachedComments)}`)
+
+  const comment = cachedComments.shift()
+
+  await Cache.build().set(CacheKeyChatbotSessionZendeskComment(param.sessionId), cachedComments, 'EX', 24 * 60 * 60)
+
+  await ZendeskBull.getInstance().chatbotSessionCommentTicket({
+    user: param.user,
+    message: comment.message,
+    sessionId: param.sessionId,
+    sourceId: param.sourceId,
+    integration: param.integration,
+    agentId: param.agentId,
+    sentBy: comment.sentBy,
+    tags: param.tags
+  })
+}
+
+export async function ChatbotSessionCloseTicketQueue(job: Bull.Job<ZendeskBullType.ChabotSessionBaseJob>, done: () => void) {
+  try {
+    const result = await ZendeskService.getInstance().closeSessionChatbotTicket(job.data.user.userData.zendeskTicketId, job.data.tags)
+    logger.debug(`[ChatbotSession ${job.data.sourceId}] close ticket result ${JSON.stringify(result?.data)}`)
+
+    const strRetryAfter = result?.headers['retry-after']
+    if (result?.status == 429 && strRetryAfter) {
+      // retry
+      await ZendeskBull.getInstance().chatbotSessionCloseTicket(job.data, parseInt(strRetryAfter))
+      return done()
+    }
+
+    validateRequestLimit(result.headers)
+
+    // send csat if exist
+    const sessionData = await ChatbotSessionService.build().getSessionId(job.data.sessionId)
+    if (sessionData.csat && sessionData.csat != 'offered') {
+      await ZendeskBull.getInstance().updateTicketCsat({
+        ticketId: job.data.user.userData.zendeskTicketId,
+        satisfactionScore: sessionData.csat,
+        comment: sessionData.feedback,
+        requesterId: job.data.user.userData.requesterId
+      })
+    }
+
+    // clear user ticket id
+    await database().User.updateById(job.data.user._id, {
+      userData: {
+        ...job.data.user.userData,
+        zendeskTicketId: null,
+        isInHumanFallback: false
+      }
+    })
+
+    await ChatbotSessionService.build().sessionUploaded(job.data.sessionId)
+
+    return done()
+  } catch (error) {
+    console.error(error)
+    await ChatbotSessionService.build().sessionUploadError(job.data.sessionId)
+    Sentry.captureException(error)
+    job.moveToFailed({ message: error.message })
+  }
+}
+
+export async function UpdateTicketCsatQueue(job: Bull.Job<ZendeskBullType.UpdateTicketCsatJob>, done: () => void) {
+  try {
+    const result = await ZendeskService.getInstance().updateTicketCSAT(job.data.ticketId, job.data.requesterId, job.data.satisfactionScore, job.data.comment)
+    logger.debug(`[ChatbotSession ${job.data.ticketId}] update csat result ${JSON.stringify(result?.data)}`)
+
+    console.log('Result %j', result.data)
+    const strRetryAfter = result?.headers['retry-after']
+    if (result?.status == 429 && strRetryAfter) {
+      await ZendeskBull.getInstance().updateTicketCsat(job.data)
+      return done()
+    }
+
+    validateRequestLimit(result.headers)
+
+    return done()
+  } catch (error) {
+    console.error(error)
+    Sentry.captureException(error)
+    job.moveToFailed({ message: error.message })
+  }
+}

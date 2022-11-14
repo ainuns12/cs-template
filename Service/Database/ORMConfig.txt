@@ -1,0 +1,33 @@
+import { ConnectionOptions } from 'typeorm'
+import { ChatbotSessionEntity } from './Entity/ChatbotSessionEntity'
+
+const DB = {
+  username: process.env.PSQL_DB_USER,
+  password: process.env.PSQL_DB_PASS,
+  database: process.env.PSQL_DB_NAME,
+  host: process.env.PSQL_DB_HOST,
+  port: parseInt(process.env.PSQL_DB_PORT),
+}
+
+const ormconfig: ConnectionOptions = {
+  database: DB.database,
+  type: 'postgres',
+  host: DB.host,
+  port: DB.port,
+  username: DB.username,
+  password: DB.password,
+  entities: [
+    ChatbotSessionEntity
+  ],
+  migrations: [
+    'dist/Service/Database/Migrations/*.js'
+  ],
+  cli: {
+    migrationsDir: 'src/Service/Database/Migrations',
+  },
+  synchronize: false, // Set To false on deployment
+  logging: ['error']
+}
+
+
+export = ormconfig

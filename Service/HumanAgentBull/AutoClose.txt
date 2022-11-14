@@ -1,0 +1,38 @@
+import { database } from '@bahasa-ai/engine-database'
+import * as Bull from 'bull'
+import * as Sentry from '@sentry/node'
+
+import { TicketAutoCloseAction } from '../../Action/{{Action}}'
+import { HumanAgentBullType } from './../../Type/HumanAgentBull'
+
+export async function AutoCloseTicket(job: Bull.Job<HumanAgentBullType.AutoCloseTicketJob>, done: Bull.DoneCallback) {
+  if (!job.data) {
+    return done()
+  }
+
+  try {
+    console.log(`${job.data.sourceId} - ${job.data.zendeskTicketId} Executing AutoCloseTicket`)
+    const users = await database().User.get({
+      sourceId: { $eq: job.data.sourceId },
+      integration: { $eq: job.data.integration },
+      agentId: { $eq: job.data.agentId }
+    })
+    if (!users.length) {
+      return done()
+    }
+
+    const user = users[0]
+    const { zendeskTicketId } = user.userData
+    if (!zendeskTicketId || zendeskTicketId != job.data.zendeskTicketId) {
+      return done()
+    }
+
+    await TicketAutoCloseAction(user)
+    return done()
+  } catch (error) {
+    console.error(error)
+    Sentry.captureException(error)
+
+    return done(error)
+  }
+}

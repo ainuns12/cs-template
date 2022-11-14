@@ -1,0 +1,8 @@
+import { CommentTicketParam } from '../Service/Zendesk'
+
+export namespace ChabtotSessionReportType {
+  export type ChatbotSessionMessage = {
+    message: CommentTicketParam,
+    sentBy: 'bot' | 'user'
+  }
+}

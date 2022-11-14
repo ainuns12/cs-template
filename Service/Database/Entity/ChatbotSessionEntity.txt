@@ -1,0 +1,47 @@
+import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm'
+import { ZendeskSatisfactionScoreType } from '../../Zendesk'
+
+@Entity({ name: 'chatbot_session' })
+export class ChatbotSessionEntity {
+  @PrimaryGeneratedColumn()
+  id?: number
+
+  @Column()
+  sessionId: string
+
+  @Column()
+  sourceId: string
+
+  @Column()
+  integration: string
+
+  @Column()
+  agentId: string
+
+  @Column()
+  handledBy: 'bot' | 'agent'
+
+  @Column({ nullable: true })
+  ticketId?: number
+
+  @Column({ nullable: true })
+  csat?: ZendeskSatisfactionScoreType
+
+  @Column({ nullable: true })
+  feedback?: string
+
+  @Column()
+  uploadZendeskStatus: 'not-uploaded' | 'queued' | 'uploaded' | 'error'
+
+  @Column({ type: 'timestamptz' })
+  createdAt: Date
+
+  @Column({ nullable: true, type: 'timestamptz' })
+  uploadedAt?: Date
+
+  @Column('text', { nullable: true, array: true })
+  tags?: string[]
+
+  @Column({ nullable: true })
+  zendeskTicketId?: number
+}

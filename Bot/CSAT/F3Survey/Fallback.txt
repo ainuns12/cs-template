@@ -1,0 +1,32 @@
+import { AddCsatAutocloseAction } from '../../../Action/FCSAT/FCsatAutoclose'
+import LogEvent from '../../../Action/LogEvent'
+import { FallbackIntent, PushIntent } from '../../../Bot'
+import Response from '../../../Util/Response'
+
+export class F8ContextFallbackResponse extends PushIntent {
+  static isContextReplaced = true
+  static contextOut = [
+    'F3CSATSurvey'
+  ]
+
+  public async push(e: EventMiddleware) {
+    return this.trigger(e, {
+      response: Response.text([
+        'Maaf kami tidak mengerti yang kamu maksud... Apakah kamu puas dengan layanan kami? 😊',
+        'Silakan pilih salah satu dari opsi yang tersedia di atas ya 👆',
+      ])
+    })
+  }
+}
+
+export class F8ContextFallback extends FallbackIntent {
+  static contextIn = [
+    'F3CSATSurvey'
+  ]
+
+  public actions() {
+    return this.run(LogEvent).run(AddCsatAutocloseAction).run(async (e, d: DataMiddleware, __) => {
+      return await new F8ContextFallbackResponse().push(e)
+    })
+  }
+}

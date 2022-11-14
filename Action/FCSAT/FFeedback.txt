@@ -1,0 +1,58 @@
+import { ZendeskService } from '../../Service/Zendesk'
+import { F7AfterFillCSAT } from '../../Bot/CSAT/F6Feedback/Main'
+import { forceSessionExpired, SetExcludeCsat } from '../../Util/BotToolkit'
+import { delay } from 'bluebird'
+import { ChatbotSessionService } from '../../Service/ChatbotSessionService'
+
+export const SaveFeedbackAnswer = async (event: EventMiddleware, data: DataMiddleware, next: StoryNextFunction) => {
+  const stm = await data.STM.memory
+  const ltm = await data.LTM.memory
+
+  const lastTicketNumber = stm.ticketNumber
+  const feedback = event.intent.parameter.userFeedback
+
+  if (feedback && typeof feedback === 'string') {
+    data.STM.patch({
+      ticketFeedback: feedback
+    })
+  } else {
+    throw new Error('[ERROR 1] Invalid feedback data type')
+  }
+
+  if (stm.ticketNumber) {
+    await ZendeskService.getInstance().updateTicketCSAT(lastTicketNumber, ltm.zendeskRequesterId, stm.csatScore, feedback)
+  } else {
+    // chatbot session only
+    // @TODO: SET JOB for midnight
+    const tags = []
+
+    await ChatbotSessionService.build().insertSession({
+      sessionId: event.sessionId,
+      sourceId: event.sourceId,
+      agentId: event.agentId,
+      integration: event.integration,
+      handledBy: 'bot',
+      csat: stm.csatScore,
+      feedback: feedback,
+      uploadZendeskStatus: 'not-uploaded',
+      createdAt: new Date(),
+      tags
+    })
+  }
+
+  return next(event, data)
+}
+
+export const F7CloseFeedbackSession = async (event: EventMiddleware, data: DataMiddleware, next: StoryNextFunction) => {
+  await new F7AfterFillCSAT().push(event)
+
+  await delay(500)
+
+  // WARN: FORCING SESSION EXPIRED
+  await forceSessionExpired(event.sessionId)
+
+  // Disable csat for user for 1 hour
+  await SetExcludeCsat(event.sourceId)
+
+  return next(event, data)
+}

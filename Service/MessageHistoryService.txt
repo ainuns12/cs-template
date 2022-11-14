@@ -1,0 +1,31 @@
+import { Connection, Repository } from 'typeorm'
+import { AnalyticsDB } from './AnalyticsDB/AnalyticsDB'
+import { Message } from './AnalyticsDB/Entity/Message'
+
+export class MessageHistoryService {
+  private static instance: MessageHistoryService
+  private messageRepository: Repository<Message>
+
+  public constructor(dbConnection: Connection) {
+    this.messageRepository = dbConnection.getRepository(Message)
+  }
+
+  static async init() {
+    if (!this.instance) {
+      const dbConnection = AnalyticsDB.get
+      this.instance = new MessageHistoryService(dbConnection)
+    }
+  }
+
+  static build() {
+    if (!this.instance) {
+      throw new Error('Please init ChatbotSessionService first')
+    }
+
+    return this.instance
+  }
+
+  async messageBySession(sessionId: string) {
+    return this.messageRepository.find({ where: { sessionId }, order: { createdAt: 'ASC' } })
+  }
+}

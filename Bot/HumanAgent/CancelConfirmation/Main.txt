@@ -1,0 +1,51 @@
+import { TriggerIntentPayload } from '@bahasa-ai/plugins-core-engine'
+import { addChatbotReminder } from '../../../Action/{{Action}}Middleware'
+import { CancelTicketConfirmationAction } from '../../../Action/{{Action}}'
+import LogEvent from '../../../Action/LogEvent'
+import { InitialIntent, PushIntent } from '../../../Bot'
+import Response from '../../../Util/Response'
+import { UserConfirmationExpression } from '../../../Util/ReusableExpression'
+
+export class CancelTicketConfirmationPush extends PushIntent {
+  static isContextReplaced = true
+  static contextOut = [
+    'cCancelTicketConfirmation'
+  ]
+
+  public async pushWithoutEvent(payload: TriggerIntentPayload) {
+    return this.triggerWithoutEvent(payload, {
+      response: Response.text([
+        [
+          'Apakah kamu yakin untuk membatalkan *bantuan*?',
+          '_Ketik *iya* jika ingin membatalkan_',
+          '_Ketik *tidak* jika ingin lanjut menghubungi bantuan_'
+        ].join('\n')
+      ])
+    })
+  }
+}
+
+export class CancelTicketConfirmation extends InitialIntent {
+  static contextIn = [
+    'cCancelTicketConfirmation'
+  ]
+
+  static parameter = UserConfirmationExpression.parameter
+  static userExpression = UserConfirmationExpression.userExpression
+
+  public actions() {
+    return this.run(LogEvent).run(addChatbotReminder).run(CancelTicketConfirmationAction)
+  }
+}
+
+export class TicketCanceled extends PushIntent {
+  static isContextReplaced = true
+
+  public async push(e: EventMiddleware) {
+    return this.trigger(e, {
+      response: Response.text([
+        'Baik, kamu tidak jadi menghubungi tim Live Agent kami 🙏'
+      ])
+    })
+  }
+}

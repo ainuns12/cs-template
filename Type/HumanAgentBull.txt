@@ -1,0 +1,26 @@
+export namespace HumanAgentBullType {
+  export type AutoCloseTicketJob = {
+    sourceId: string,
+    integration: any,
+    agentId: string,
+    zendeskTicketId: number
+  }
+
+  export type ChatbotNotifier = {
+    sourceId: string,
+    integration: string,
+    agentId: string,
+    sessionId: string
+  }
+
+  export type ChatbotCloseSession = {
+    sourceId: string,
+    integration: string,
+    agentId: string,
+    sessionId: string
+  }
+
+  export type CsatAutoClose = ChatbotCloseSession & {
+    handledBy: 'bot' | 'agent'
+  }
+}

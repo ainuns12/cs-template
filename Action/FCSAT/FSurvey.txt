@@ -1,0 +1,52 @@
+import { F8ContextFallbackResponse } from '../../Bot/CSAT/F3Survey/Fallback'
+import { F6AskFeedbackPush } from '../../Bot/CSAT/F6Feedback/Main'
+import { ZendeskSatisfactionScoreType } from '../../Service/Zendesk'
+import { SystemEntity } from '../../Type/SystemEntity'
+import { SatisfactionButton, SatisfactionButtonId } from '../../Util/CSHelper'
+import { GetMenuID } from '../../Util/Interactive'
+
+/**
+ * Save CSAT answer to STM and update ticket to zendesk
+ * @param event EventMiddleware
+ * @param data DataMiddleware
+ * @param next StoryNextFunction
+ *
+ * 1. Get CSAT answer, validate
+ * 2. Update previous zendesk ticket with new CSAT data
+ * 3. Trigger next function
+ */
+export const SaveCSATAnswer = async (event: EventMiddleware, data: DataMiddleware, next: StoryNextFunction) => {
+  const stm = await data.STM.memory
+  const menuId = GetMenuID(event.query)
+
+  const selected = SatisfactionButton.find(i => i.reply.id == menuId)
+
+  let csatScore: ZendeskSatisfactionScoreType
+  if (selected) {
+
+    switch (selected.reply.id) {
+      case SatisfactionButtonId.puas:
+        csatScore = 'good'
+        break
+      case SatisfactionButtonId.tidakPuas:
+        csatScore = 'bad'
+        break
+    }
+  }
+
+  if (!csatScore) {
+    // ask again
+    return await new F8ContextFallbackResponse().push(event)
+  }
+
+  data.STM.patch({
+    csatScore: csatScore
+  })
+
+  return next(event, data)
+}
+
+export const F6AskFeedbackReason = async (event: EventMiddleware, data: DataMiddleware, next: StoryNextFunction) => {
+  await new F6AskFeedbackPush().push(event)
+  return next(event, data)
+}

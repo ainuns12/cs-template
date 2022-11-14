@@ -1,0 +1,30 @@
+import { CACHE_TYPE_EX } from '../Util/CSHelper'
+import { Cache } from '../Service/Cache'
+
+export class HumanAgentLock {
+  private static instance: HumanAgentLock
+
+  static get get() {
+    if (!this.instance) {
+      this.instance = new HumanAgentLock()
+    }
+
+    return this.instance
+  }
+
+  private redisKey(sourceId: string) {
+    return `{{ClientSlug}}:human_agent_lock:${sourceId}`
+  }
+
+  async lockStatus(sourceId: string): Promise<boolean> {
+    return Cache.build().get(this.redisKey(sourceId))
+  }
+
+  async lockUser(sourceId: string) {
+    return Cache.build().set(this.redisKey(sourceId), true, CACHE_TYPE_EX, 3600)
+  }
+
+  async releaseLock(sourceId: string) {
+    return Cache.build().del(this.redisKey(sourceId))
+  }
+}

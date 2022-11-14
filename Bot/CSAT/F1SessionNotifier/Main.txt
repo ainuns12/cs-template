@@ -1,0 +1,57 @@
+import { TriggerIntentPayload } from '@bahasa-ai/plugins-core-engine'
+import { F1ChatbotSessionCloseAction } from '../../../Action/FCSAT/FChatbotSessionClose'
+import LogEvent from '../../../Action/LogEvent'
+import { InitialIntent, PushIntent } from '../../../Bot'
+import Response from '../../../Util/Response'
+
+export class F1ChatbotSessionClose extends InitialIntent {
+  static contextIn = [
+    'F1ChatbotSessionNotifier'
+  ]
+
+  static parameter = {
+    userConfirmation: {
+      entity: 'userConfirmation'
+    }
+  }
+
+  static userExpression = [
+    {
+      sentence: 'tidak',
+      parameter: {
+        userConfirmation: '0,0'
+      }
+    }
+  ]
+
+  public actions() {
+    return this.run(LogEvent).run(F1ChatbotSessionCloseAction)
+  }
+}
+
+export class F1ChatbotSessionNotifierPush extends PushIntent {
+  static isContextReplaced = false
+  static contextOut = [
+    'F1ChatbotSessionNotifier'
+  ]
+
+  public async push(event: EventMiddleware) {
+    return await this.trigger(event, {
+      response: Response.text([
+        `Halo Kak ${event.user.name}, ada lagi yang bisa kami bantu? 😊
+
+_ketik *tidak* untuk mengakhiri percakapan_`
+      ])
+    })
+  }
+
+  public async pushWithoutEvent(payload: TriggerIntentPayload, userName: string) {
+    return await this.triggerWithoutEvent(payload, {
+      response: Response.text([
+        `Halo Kak ${userName}, ada lagi yang bisa kami bantu? 😊
+
+_ketik *tidak* untuk mengakhiri percakapan_`
+      ])
+    })
+  }
+}

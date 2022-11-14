@@ -1,0 +1,67 @@
+import { Connection, Repository } from 'typeorm'
+import { ChatbotSessionEntity } from './Database/Entity/ChatbotSessionEntity'
+import { PSQL } from './Database/Main'
+
+export class ChatbotSessionService {
+  private static instance: ChatbotSessionService
+  private chatbotSessionRepository: Repository<ChatbotSessionEntity>
+
+  public constructor(dbConnection: Connection) {
+    this.chatbotSessionRepository = dbConnection.getRepository(ChatbotSessionEntity)
+  }
+
+  static async init() {
+    if (!this.instance) {
+      const dbConnection = await PSQL.connect()
+      this.instance = new ChatbotSessionService(dbConnection)
+    }
+  }
+
+  static build() {
+    if (!this.instance) {
+      throw new Error('Please init ChatbotSessionService first')
+    }
+
+    return this.instance
+  }
+
+  async insertSession(data: ChatbotSessionEntity) {
+    return this.chatbotSessionRepository.insert(data)
+  }
+
+  async getSessionOnQueue() {
+    return this.chatbotSessionRepository.count({ where: { uploadZendeskStatus: 'queued' } })
+  }
+
+  async getSessionDataOnQueue() {
+    return this.chatbotSessionRepository.find({ where: { uploadZendeskStatus: 'queued' } })
+  }
+
+  async resetSessionDataOnQueue() {
+    return this.chatbotSessionRepository.update({ uploadZendeskStatus: 'queued' }, { uploadZendeskStatus: 'not-uploaded' })
+  }
+
+  async getSessionToUpload(limit: number) {
+    return this.chatbotSessionRepository.find({ where: { uploadZendeskStatus: 'not-uploaded', handledBy: 'bot' }, order: { createdAt: 'ASC' }, take: limit })
+  }
+
+  async sessionQueued(sessionId: string) {
+    return this.chatbotSessionRepository.update({ sessionId }, { uploadZendeskStatus: 'queued' })
+  }
+
+  async sessionUploaded(sessionId: string) {
+    return this.chatbotSessionRepository.update({ sessionId }, { uploadZendeskStatus: 'uploaded', uploadedAt: new Date() })
+  }
+
+  async sessionUploadError(sessionId: string) {
+    return this.chatbotSessionRepository.update({ sessionId }, { uploadZendeskStatus: 'error' })
+  }
+
+  async getSessionId(sessionId: string) {
+    return this.chatbotSessionRepository.findOne({ sessionId })
+  }
+
+  async updateZendeskTicket(sessionId: string, zendeskTicketId: number) {
+    return this.chatbotSessionRepository.update({ sessionId }, { zendeskTicketId })
+  }
+}

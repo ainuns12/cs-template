@@ -1,0 +1,46 @@
+import { TriggerIntentPayload } from '@bahasa-ai/plugins-core-engine'
+import { removeChatbotReminder } from '../../Action/{{Action}}Middleware'
+import { CanceCsatAutoCloseAction } from '../../Action/FCSAT/FCsatAutoclose'
+import { ActivateIris } from '../../Action/{{Action}}'
+import LogEvent from '../../Action/LogEvent'
+import { InitialIntent, PushIntent } from '../../Bot'
+
+export class ConnectToAgent extends InitialIntent {
+  static parameter = {
+    keyword: {
+      entity: 'bantuanKeyword'
+    }
+  }
+
+  static userExpression = [
+    {
+      sentence: 'bantuan',
+      parameter: {
+        bantuanKeyword: '0,0'
+      }
+    },
+    {
+      sentence: 'mau cs',
+      parameter: {
+        bantuanKeyword: '1,1'
+      }
+    }
+  ]
+
+  public actions() {
+    return this.run(LogEvent).run(removeChatbotReminder).run(CanceCsatAutoCloseAction).run(ActivateIris)
+  }
+}
+
+
+export class PushHumanAgentResponse extends PushIntent {
+  static isContextReplaced = true
+
+  public async push(event: EventMiddleware, response: any) {
+    return await this.trigger(event, { response })
+  }
+
+  public async pushWithoutEvent(payload: TriggerIntentPayload, response: any) {
+    return await this.triggerWithoutEvent(payload, { response })
+  }
+}

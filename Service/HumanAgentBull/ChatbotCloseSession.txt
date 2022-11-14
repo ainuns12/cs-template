@@ -1,0 +1,38 @@
+import { database } from '@bahasa-ai/engine-database'
+import * as Bull from 'bull'
+import { F3AskSurveyPush } from '../../Bot/CSAT/F3Survey/Main'
+import { closingResponse } from '../../Util/CSHelper'
+
+import { HumanAgentBullType } from './../../Type/HumanAgentBull'
+import { EngineBull } from './Main'
+
+export async function ChatbotCloseSession(job: Bull.Job<HumanAgentBullType.ChatbotCloseSession>, done: () => void) {
+  if (!job.data) {
+    return done()
+  }
+
+  const users = await database().User.get({
+    sourceId: { $eq: job.data.sourceId },
+    integration: { $eq: job.data.integration },
+    agentId: { $eq: job.data.agentId }
+  })
+  if (!users.length) {
+    return done()
+  }
+
+  await new F3AskSurveyPush().pushWithoutEvent({
+    agentId: job.data.agentId,
+    intentSlug: 'F3AskSurveyPush',
+    sourceId: job.data.sourceId,
+    integration: job.data.integration as any,
+    isHumanFallback: false
+  }, closingResponse())
+
+  // add csat autoclose
+  await EngineBull.getInstance().addCsatAutoCloseQueue({
+    ...job.data,
+    handledBy: 'bot'
+  })
+
+  return done()
+}

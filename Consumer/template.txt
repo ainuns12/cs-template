@@ -1,3 +1,4 @@
+      logger.debug(`AI Payload ${JSON.stringify(AIMessage)}`)
       if (AIMessage.user.isInHumanFallback) {
         return await ToAgent(AIMessage)
       }

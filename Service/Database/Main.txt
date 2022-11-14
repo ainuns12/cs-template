@@ -1,0 +1,23 @@
+import { Connection, createConnection } from 'typeorm'
+import * as Sentry from '@sentry/node'
+import ormconfig = require('./ORMConfig')
+
+export class PSQL {
+  private static connection: Connection
+
+  static async connect() {
+    if (!this.connection) {
+      try {
+        if (!ormconfig) {
+          throw new Error('No ormconfig found')
+        }
+        this.connection = await createConnection(ormconfig)
+      } catch (error) {
+        Sentry.captureException(error)
+        throw error
+      }
+    }
+
+    return this.connection
+  }
+}

@@ -1,0 +1,104 @@
+import { database } from '@bahasa-ai/engine-database'
+import { logger } from 'elastic-apm-node'
+import { CacheKeyChatbotSessionZendeskComment } from '../Util/CSHelper'
+import { ClosedByBotTag } from '../Util/CSHelper'
+import { Cache } from '../Service/Cache'
+import { ChatbotSessionService } from '../Service/ChatbotSessionService'
+import { ChatbotSessionEntity } from '../Service/Database/Entity/ChatbotSessionEntity'
+import { MessageHistoryService } from '../Service/MessageHistoryService'
+import { ZendeskService } from '../Service/Zendesk'
+import { ZendeskBull } from '../Service/ZendeskBull/Main'
+import { ChabtotSessionReportType } from './../Type/ChatbotSessionReport'
+
+export async function UploadChatbotSessionToZendesk(batchLimit: number) {
+  logger.debug(`[UploadChatbotSessionToZendesk] started with batch limit ${batchLimit}`)
+  const currentQueued = await ChatbotSessionService.build().getSessionOnQueue()
+
+  const limit = batchLimit - currentQueued
+  if (limit <= 0) {
+    logger.debug(`Current session ticket in queue ${currentQueued}, limit ${batchLimit}`)
+    return
+  }
+  logger.debug(`[UploadChatbotSessionToZendesk] allowed limit ${limit} with current queued ${currentQueued}`)
+  const sessionToUpload = await ChatbotSessionService.build().getSessionToUpload(limit)
+
+  for (const session of sessionToUpload) {
+    await GenerateChatbotSessionZendeskTicket(session)
+  }
+
+  logger.debug('[UploadChatbotSessionToZendesk] finished')
+}
+
+export async function GenerateChatbotSessionZendeskTicket(session: ChatbotSessionEntity) {
+  const messages = await MessageHistoryService.build().messageBySession(session.sessionId)
+  const comments: ChabtotSessionReportType.ChatbotSessionMessage[] = messages.map(item => {
+    if ((/^url\:.*mime\_type\:.*caption\:.*$/gi).test(item.message)) {
+      const commentSplit = item.message.split(' ')
+      const url = commentSplit[1]
+      const caption = commentSplit.slice(5, commentSplit.length).join(' ')
+
+      return { sentBy: item.from === session.sourceId ? 'user' : 'bot', message: { query: item.message, media: { url, caption }, publishedAt: item.createdAt, messageId: item.id } }
+    }
+
+    return { sentBy: item.from === session.sourceId ? 'user' : 'bot', message: { query: item.message, publishedAt: item.createdAt, messageId: item.id } }
+  })
+
+  // store comments to cache
+  await Cache.build().set(CacheKeyChatbotSessionZendeskComment(session.sessionId), comments, 'EX', 24 * 60 * 60)
+
+  const users = await database().User.get({ integration: { $eq: session.integration }, agentId: { $eq: session.agentId }, sourceId: { $eq: session.sourceId } })
+  if (!users.length) {
+    return
+  }
+
+  const user = users[0]
+
+  const LTMs = await database().LTM.get({ integration: { $eq: session.integration }, agentId: { $eq: session.agentId }, sourceId: { $eq: session.sourceId } })
+  if (!LTMs.length) {
+    return
+  }
+
+  const { zendeskRequesterId } = LTMs[0].memory
+
+  await ChatbotSessionService.build().sessionQueued(session.sessionId)
+
+  const ticketDetailField = await ZendeskService.getInstance().getTicketFieldField(parseInt(process.env.ZENDESK_TICKET_DETAIL_FIELD || '900007955003'))
+  const tags = ['bahasa_chatbot_session', ClosedByBotTag]
+  if (session.tags?.length) {
+    tags.push(...session.tags)
+  } else {
+    tags.push('informasi_belum_jelas')
+  }
+
+  if (ticketDetailField?.data?.ticket_field && ticketDetailField?.data?.ticket_field?.custom_field_options?.length) {
+    const fieldValues = ticketDetailField.data.ticket_field.custom_field_options?.map(item => item.value)
+    let isContainTicketDetail = false
+    for (const tag of tags) {
+      if (fieldValues.includes(tag)) {
+        isContainTicketDetail = true
+        break
+      }
+    }
+
+    if (!isContainTicketDetail) {
+      tags.push('informasi_belum_jelas')
+    }
+  }
+
+  // init chatbot session create ticket queue
+  await ZendeskBull.getInstance().chatbotSessionCreateTicket({
+    sessionId: session.sessionId,
+    integration: session.integration,
+    sourceId: session.sourceId,
+    agentId: session.agentId,
+    user: user,
+    tags,
+    param: {
+      integration: session.integration,
+      sourceId: session.sourceId,
+      user: { name: user.userData.name },
+      zendeskRequesterId,
+      tags
+    }
+  })
+}

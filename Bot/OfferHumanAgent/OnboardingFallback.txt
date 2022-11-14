@@ -1,0 +1,54 @@
+
+import { addChatbotReminder } from '../../Action/{{Action}}Middleware'
+import LogEvent from '../../Action/LogEvent'
+import { FallbackIntent, InitialIntent, PushIntent } from '../../Bot'
+import { ONBOARDING_USX } from '../../Util/Constant'
+import Response from '../../Util/Response'
+
+export class OnboardingOfferHumanAgent extends InitialIntent {
+  static contextIn = [
+    'cOfferHumanAgent'
+  ]
+
+  static userExpression = [
+    ...ONBOARDING_USX
+  ]
+
+  public actions() {
+    return this.run(LogEvent).run(addChatbotReminder).run(async (e, _, __) => {
+      return await new OnboardingOfferHumanAgentPush().push(e)
+    })
+  }
+}
+
+export class OnboardingOfferHumanAgentPush extends PushIntent {
+  static isContextReplaced = true
+  static contextOut = [
+    'cOfferHumanAgent'
+  ]
+
+  public async push(e: EventMiddleware) {
+    return this.trigger(e, {
+      response: Response.text([
+        [
+          'Apakah ingin kami bantu untuk dihubungkan dengan tim Live Agent kami kami? 😊',
+          '',
+          '_Ketik *ya* untuk dihubungkan_',
+          '_Ketik *tidak* jika tidak ingin dihubungkan_'
+        ].join('\n')
+      ])
+    })
+  }
+}
+
+export class OfferHumanAgentFallback extends FallbackIntent {
+  static contextIn = [
+    'cOfferHumanAgent'
+  ]
+
+  public actions() {
+    return this.run(LogEvent).run(addChatbotReminder).run(async (e, _, __) => {
+      return await new OnboardingOfferHumanAgentPush().push(e)
+    })
+  }
+}
