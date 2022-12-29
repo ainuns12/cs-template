@@ -2,4 +2,3 @@
   'F3CSATSurvey',
   'F6FeedbackSurvey',
   'cCancelTicketConfirmation',
-  'cOfferHumanAgent',

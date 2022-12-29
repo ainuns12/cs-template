@@ -1,6 +1,5 @@
-import { WorkingDay, WorkingHour } from './WorkingHour'
-
-export const CACHE_TYPE_EX = 'EX'
+import { Utils } from '@bahasa-ai/plugins-chatbot'
+import { SatisfactionButton } from './Buttons'
 
 export const AskUserToWaitHumanAgent = (isB2B: boolean = false) => {
   return [
@@ -23,7 +22,7 @@ export const OutsideWorkHourResponse = (userName: string) => {
     `Hi ${userName}, Terima kasih sudah menghubungi tim Live Agent kami. `,
     '',
     'Jam Operasional tim Live Agent kami:',
-    `${WorkingDay()} Pk. ${WorkingHour()} WIB`,
+    `${Utils.workingDay()} Pk. ${Utils.workingHour()} WIB`,
     '',
     'Mohon ditunggu, terima kasih pengertiannya ☺️',
   ].join('\n')
@@ -37,27 +36,6 @@ export const TicketClosedResponse = () => {
   ].join('\n')
 }
 
-export const SatisfactionButtonId = {
-  puas: 'puas',
-  tidakPuas: 'tidak-puas'
-}
-
-export const SatisfactionButton = [
-  {
-    type: 'reply',
-    reply: {
-      id: SatisfactionButtonId.puas,
-      title: 'Puas 👍'
-    }
-  },
-  {
-    type: 'reply',
-    reply: {
-      id: SatisfactionButtonId.tidakPuas,
-      title: 'Tidak Puas 👎'
-    }
-  },
-]
 
 export const closingResponse = (additionalText: string[] = []) => {
   let interactiveText = ['Oh ya sebelum kamu pergi, kasih tahu Raya seberapa puas kamu dengan layanan Live Agent kami kali ini ya. Semoga harimu menyenangkan 😊']
@@ -81,78 +59,6 @@ export const closingResponse = (additionalText: string[] = []) => {
 }
 
 
-/**function */
-
-export function getUrlExtension(url: string): string {
-  return url.split(/[#?]/)[0].split('.').pop().trim()
-}
-
-export function getUrlFileName(url: string): string {
-  const filenames = url.split('/')
-  return filenames[filenames.length - 1].trim()
-}
-
-/**cache */
-
-export const CacheKeyUserZendeskTicket = (ticketID: number) => {
-  return `{{ClientSlug}}:ZendeskTicket:${ticketID}`
-}
-
-export const CacheKeyUserDataByZendeskId = (ticketID: number) => {
-  return `{{ClientSlug}}:UserDataByZendeskTicket:${ticketID}`
-}
-
-export const CacheKeyZendeskLastComment = (ticketID: number) => {
-  return `{{ClientSlug}}:ZendeskLastComment:${ticketID}`
-}
-
-export const TicketCacheTTLInSeconds = () => {
-  return (TicketAutoCloseInMinutes() + 5) * 60
-}
-export const CacheKeyKendalaPenggunaMenu = '{{ClientSlug}}:KendalaPenggunaMenu'
-
-export const CacheKeyChatbotSessionZendeskComment = (sessionId: string) => {
-  return `{{ClientSlug}}:ChatbotSessionZendeskComment;${sessionId}`
-}
-
-export const CacheKeyExcludeCsat = (sourceId: string) => {
-  return `{{ClientSlug}}:ExcludeCsat:${sourceId}`
-}
-
-export const QueueName = {
-  CreateTicket: `{{ClientSlug}}:${process.env.ENVIRONMENT}:zendesk_bull:createTicketQueue`,
-  CommentTicket: `{{ClientSlug}}:${process.env.ENVIRONMENT}:zendesk_bull:commentTicketQueue`,
-  CancelTicket: `{{ClientSlug}}:${process.env.ENVIRONMENT}:zendesk_bull:cancelTicketByUserQueue`,
-  TicketAutoClose: `{{ClientSlug}}:${process.env.ENVIRONMENT}:zendesk_bull:ticketAutoCloseQueue`,
-  UpdateTagSolvedByAgent: `{{ClientSlug}}:${process.env.ENVIRONMENT}:zendesk_bull:updateTagSolvedByAgent`,
-  UpdateCsat: `{{ClientSlug}}:${process.env.ENVIRONMENT}:zendesk_bull:updateCsatQueue`,
-  Enabler: `{{ClientSlug}}:${process.env.ENVIRONMENT}:zendesk_bull:queueEnabler`,
-  ChatbotSessionCreateTicket: `{{ClientSlug}}:${process.env.ENVIRONMENT}:zendesk_bull:chatbotSessionCreateTicketQueue`,
-  ChatbotSessionCommentTicket: `{{ClientSlug}}:${process.env.ENVIRONMENT}:zendesk_bull:chatbotSessionCommentTicketQueue`,
-  ChatbotSessionCloseTicket: `{{ClientSlug}}:${process.env.ENVIRONMENT}:zendesk_bull:chatbotSessionCloseTicketQueue`
-}
-
-
 export const ClosedByBotTag = 'solved_by_bot'
 export const ClosedByAgentTag = 'solved_by_agent'
 export const MelebihiLimitPendingTag = 'melebihi_limit_pending'
-
-export const TicketAutoCloseInMinutes = () => {
-  return parseInt(process.env.TICKET_AUTOCLOSE) || 20
-}
-
-export const TicketReminderInMinutes = () => {
-  return parseInt(process.env.TICKET_REMINDER) || 15
-}
-
-export const ChatbotAutoCloseInMinutes = () => {
-  return parseInt(process.env.CHATBOT_AUTOCLOSE) || 20
-}
-
-export const ChatbotReminderInMinutes = () => {
-  return parseInt(process.env.CHATBOT_REMINDER) || 15
-}
-
-export const CsatAutocloseInMinutes = () => {
-  return parseInt(process.env.CSAT_AUTOCLOSE) || 60
-}

@@ -1,0 +1,43 @@
+export const ConfirmationButtonId = {
+  ya: 'ya',
+  tidak: 'tidak'
+}
+
+export const ConfirmationButton = [
+  {
+    reply: {
+      id: 'ya',
+      title: 'Ya'
+    },
+    type: 'reply'
+  },
+  {
+    reply: {
+      id: 'tidak',
+      title: 'Tidak'
+    },
+    type: 'reply'
+  }
+]
+
+export const SatisfactionButtonId = {
+  puas: 'puas',
+  tidakPuas: 'tidak-puas'
+}
+
+export const SatisfactionButton = [
+  {
+    type: 'reply',
+    reply: {
+      id: SatisfactionButtonId.puas,
+      title: 'Puas 👍'
+    }
+  },
+  {
+    type: 'reply',
+    reply: {
+      id: SatisfactionButtonId.tidakPuas,
+      title: 'Tidak Puas 👎'
+    }
+  },
+]

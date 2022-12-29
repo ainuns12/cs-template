@@ -3,26 +3,17 @@ import { F1ChatbotSessionCloseAction } from '../../../Action/FCSAT/FChatbotSessi
 import LogEvent from '../../../Action/LogEvent'
 import { InitialIntent, PushIntent } from '../../../Bot'
 import Response from '../../../Util/Response'
+import { InteractiveExpression } from '../../../Util/ReusableExpression'
+
 
 export class F1ChatbotSessionClose extends InitialIntent {
   static contextIn = [
     'F1ChatbotSessionNotifier'
   ]
 
-  static parameter = {
-    userConfirmation: {
-      entity: 'userConfirmation'
-    }
-  }
+  static parameter = InteractiveExpression.parameter
 
-  static userExpression = [
-    {
-      sentence: 'tidak',
-      parameter: {
-        userConfirmation: '0,0'
-      }
-    }
-  ]
+  static userExpression = InteractiveExpression.userExpression
 
   public actions() {
     return this.run(LogEvent).run(F1ChatbotSessionCloseAction)
@@ -37,21 +28,53 @@ export class F1ChatbotSessionNotifierPush extends PushIntent {
 
   public async push(event: EventMiddleware) {
     return await this.trigger(event, {
-      response: Response.text([
-        `Halo Kak ${event.user.name}, ada lagi yang bisa kami bantu? 😊
-
-_ketik *tidak* untuk mengakhiri percakapan_`
-      ])
+      response: Response.interactiveButton({
+        body: [
+          `Halo Kak ${event.user.name}, ada lagi yang bisa kami bantu? 😊`
+        ].join('\n'),
+        buttons: [
+          {
+            reply: {
+              id: 'ya',
+              title: 'Ya'
+            },
+            type: 'reply'
+          },
+          {
+            reply: {
+              id: 'tidak',
+              title: 'Tidak'
+            },
+            type: 'reply'
+          }
+        ]
+      })
     })
   }
 
   public async pushWithoutEvent(payload: TriggerIntentPayload, userName: string) {
     return await this.triggerWithoutEvent(payload, {
-      response: Response.text([
-        `Halo Kak ${userName}, ada lagi yang bisa kami bantu? 😊
-
-_ketik *tidak* untuk mengakhiri percakapan_`
-      ])
+      response: Response.interactiveButton({
+        body: [
+          `Halo Kak ${userName}, ada lagi yang bisa kami bantu? 😊`
+        ].join('\n'),
+        buttons: [
+          {
+            reply: {
+              id: 'ya',
+              title: 'Ya'
+            },
+            type: 'reply'
+          },
+          {
+            reply: {
+              id: 'tidak',
+              title: 'Tidak'
+            },
+            type: 'reply'
+          }
+        ]
+      })
     })
   }
 }

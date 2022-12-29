@@ -1,0 +1,312 @@
+import * as Bull from 'bull'
+import * as Sentry from '@sentry/node'
+import { database, DatabaseTypes, QueryResult } from '@bahasa-ai/engine-database'
+import { logger } from '../Util/Logger'
+import { PushHumanAgentResponse } from '../Bot/HumanAgentZendesk/Main'
+import Response from '../Util/Response'
+import { AskUserToWaitHumanAgent, OutsideWorkHourResponse } from '../Util/CSHelper'
+import { ZendeskType, ZendeskUtils, ZendeskBull, Utils, AnalyticsDB } from '@bahasa-ai/plugins-chatbot'
+
+export async function CreateTicketQueue(result: ZendeskType.ZendeskQueueResults, error) {
+
+
+  try {
+    if (error) {
+      throw new Error(error)
+    }
+    const { user, sessionId, ticket, zendeskRequesterId } = result
+
+    const LTMs = await database().LTM.get({
+      agentId: { $eq: user.agentId },
+      integration: { $eq: user.integration },
+      sourceId: { $eq: user.sourceId }
+    })
+    const LTM = LTMs[0]
+
+    if (!zendeskRequesterId) {
+      console.log(`New user detected, saving requester_id ${ticket.requester_id} to LTM`)
+      await database().LTM.updateById(LTM._id, {
+        memory: {
+          ...LTM.memory,
+          zendeskRequesterId: ticket.requester_id
+        }
+      })
+    }
+
+    // locking from PIWA
+    await database().User.updateById(user._id, {
+      userData: {
+        ...user.userData,
+        platform: 'zendesk',
+        isInHumanFallback: true,
+        zendeskTicketId: ticket.id,
+        requesterId: ticket.requester_id
+      }
+    })
+
+    const STMs = await database().STM.get({ sessionId: { $eq: sessionId } })
+    const STM: QueryResult<DatabaseTypes.STM<MemorySTM>> = STMs[0]
+    // @TODO: PRODUCTIZE THIS! Incoming many zendesk integration from pak jono
+    // patch STM ticketNumber
+    console.log('UPDAETING TICKET NUMBER: ', ticket.id)
+    await database().STM.updateById(STM._id, {
+      memory: {
+        ...STM.memory,
+        faqData: null,
+        ticketNumber: ticket.id
+      }
+    })
+
+    if (!Utils.isWorkingHour()) {
+      await new PushHumanAgentResponse().pushWithoutEvent({
+        agentId: user.agentId,
+        intentSlug: 'PushHumanAgentResponse',
+        sourceId: user.sourceId,
+        integration: user.integration as any
+      }, Response.text([
+        OutsideWorkHourResponse(user.userData.name)
+      ]))
+    } else {
+      await new PushHumanAgentResponse().pushWithoutEvent({
+        agentId: user.agentId,
+        intentSlug: 'PushHumanAgentResponse',
+        sourceId: user.sourceId,
+        integration: user.integration as any
+      }, Response.text([
+        AskUserToWaitHumanAgent()
+      ]))
+    }
+
+    // send all messages from user in the current session
+
+    const msgRaw = await AnalyticsDB().Message.get.messageBySession(LTM.lastSessionId)
+    const msgArr: string[] = []
+    for (const item of msgRaw) {
+      if (!item.message || !item.message.length) {
+        continue
+      }
+
+      msgArr.push(`${item.from === user.sourceId ? user.userData.name : 'Bot'} : ${item.message}`)
+    }
+    const msg = msgArr.join('\n')
+
+    const comment = [{ // use msgId from first data
+      messageId: msgRaw[0].id,
+      query: msg,
+      publishedAt: msgRaw[0].createdAt
+    }]
+
+    // update current user variable data
+    user.userData.platform = 'zendesk',
+    user.userData.isInHumanFallback = true,
+    user.userData.zendeskTicketId = ticket.id,
+    user.userData.requesterId = ticket.requester_id,
+    user.userData.zendeskTicketTags = ticket.tags || []
+
+    await ZendeskBull.get.commentTicket({
+      user,
+      messages: comment
+    })
+
+  } catch (error) {
+    console.error(error)
+
+  }
+}
+
+export async function CommentTicketQueue(result: ZendeskType.ZendeskQueueResults, error) {
+  try {
+    if (error) {
+      throw new Error(error)
+    }
+
+  } catch (error) {
+    console.error(error)
+    Sentry.captureException(error)
+    throw new Error(error)
+  }
+}
+
+export async function CancelTicketByUserQueue(result: ZendeskType.ZendeskQueueResults, error) {
+  try {
+    if (error) {
+      throw new Error(error)
+    }
+  } catch (error) {
+    console.error(error)
+    Sentry.captureException(error)
+    throw new Error(error)
+  }
+}
+
+export async function TicketAutoCloseQueue(result: ZendeskType.ZendeskQueueResults, error) {
+  try {
+    if (error) {
+      throw new Error(error)
+    }
+
+  } catch (error) {
+    console.error(error)
+    Sentry.captureException(error)
+    throw new Error(error)
+
+  }
+}
+
+export async function UpdateTagSolvedByAgentQueue(result: ZendeskType.ZendeskQueueResults, error) {
+  try {
+    if (error) {
+      throw new Error(error)
+    }
+
+  } catch (error) {
+    console.error(error)
+    Sentry.captureException(error)
+    throw new Error(error)
+
+  }
+}
+
+export async function ChatbotSessionCreateTicketQueue(result: ZendeskType.ZendeskQueueResults, error) {
+  try {
+    if (error) throw new Error(error)
+    const { user, ticket, zendeskRequesterId, sessionId, sourceId, integration, agentId, tags } = result
+
+
+    // store zendeskTicketId and requester id to user
+    const userData = {
+      ...user.userData,
+      requesterId: ticket.requester_id,
+      zendeskTicketId: ticket.id
+    }
+
+    await database().User.updateById(user._id, {
+      userData
+    })
+
+    // store requester id if not exist
+    if (!zendeskRequesterId) {
+      const LTMs = await database().LTM.get({ integration: { $eq: integration }, agentId: { $eq: agentId }, sourceId: { $eq: sourceId } })
+      if (!LTMs.length) {
+        return
+      }
+      const LTM = LTMs[0]
+
+      await database().LTM.updateById(LTM._id, {
+        memory: {
+          ...LTM.memory,
+          zendeskRequesterId: ticket.requester_id
+        }
+      })
+    }
+
+    // start insert comment
+    return await insertChatbotSessionNextComment({
+      user,
+      sessionId,
+      sourceId,
+      integration,
+      agentId,
+      tags
+    })
+
+
+
+  } catch (error) {
+    console.error(error)
+    Sentry.captureException(error)
+    throw new Error(error)
+
+
+  }
+}
+
+export async function ChatbotSessionCommentTicketQueue(result: ZendeskType.ZendeskQueueResults, error) {
+  try {
+    if (error) throw new Error(error)
+    const { user, sessionId, sourceId, integration, agentId, tags } = result
+
+    // get next comment
+    return await insertChatbotSessionNextComment({
+      user: user,
+      sessionId: sessionId,
+      sourceId: sourceId,
+      integration: integration,
+      agentId: agentId,
+      tags: tags
+    })
+
+
+  } catch (error) {
+    console.error(error)
+    Sentry.captureException(error)
+    throw new Error(error)
+
+  }
+}
+
+export async function ChatbotSessionCloseTicketQueue(result: ZendeskType.ZendeskQueueResults, error) {
+  try {
+    if (error) throw new Error(error)
+
+    const { user } = result
+    // clear user ticket id
+    return await database().User.updateById(user._id, {
+      userData: {
+        ...user.userData,
+        zendeskTicketId: null,
+        isInHumanFallback: false
+      }
+    })
+
+  } catch (error) {
+    console.error(error)
+    Sentry.captureException(error)
+    throw new Error(error)
+  }
+}
+
+export async function UpdateTicketCsatQueue(result: ZendeskType.ZendeskQueueResults, error) {
+  try {
+    if (error) throw new Error(error)
+
+  } catch (error) {
+    console.error(error)
+    Sentry.captureException(error)
+    throw new Error(error)
+
+  }
+}
+
+async function insertChatbotSessionNextComment(param: ZendeskType.ChabotSessionBaseJob) {
+  const cachedComments: ZendeskType.ChatbotSessionMessage[] = await ZendeskUtils.Cache.get.getSessionZendeskComment(param.sessionId)
+  if (!cachedComments) {
+    await ZendeskBull.get.chatbotSessionCloseTicket(param)
+    await ZendeskUtils.Cache.get.deleteSessionZendeskComment(param.sessionId)
+    return
+  }
+
+  // close chatbot session ticket
+  if (!cachedComments.length) {
+    await ZendeskBull.get.chatbotSessionCloseTicket(param)
+    await ZendeskUtils.Cache.get.deleteSessionZendeskComment(param.sessionId)
+    return
+  }
+
+  logger.debug(`[ChatbotSession ${param.sourceId}] current message ${JSON.stringify(cachedComments)}`)
+
+  const comment = cachedComments.shift()
+
+  await ZendeskUtils.Cache.get.setSessionZendeskComment(param.sessionId, cachedComments)
+
+  await ZendeskBull.get.chatbotSessionCommentTicket({
+    user: param.user,
+    message: comment.message,
+    sessionId: param.sessionId,
+    sourceId: param.sourceId,
+    integration: param.integration,
+    agentId: param.agentId,
+    sentBy: comment.sentBy,
+    tags: param.tags
+  })
+}

@@ -1,4 +1,4 @@
-import { addChatbotReminder } from '../../../Action/{{Action}}Middleware'
+import { addChatbotReminder } from '../../../Action/HumanAgentZendesk'
 import LogEvent from '../../../Action/LogEvent'
 import { FallbackIntent, PushIntent } from '../../../Bot'
 import Response from '../../../Util/Response'
@@ -11,10 +11,28 @@ export class CancelTicketConfirmationFallbackPush extends PushIntent {
 
   public async push(e: EventMiddleware) {
     return this.trigger(e, {
-      response: Response.text([
-        'Mohon maaf kami tidak mengerti yang kamu maksud 🙏',
-        'Silakan ketik *iya* untuk membatalkan atau ketik *tidak* untuk lanjut menghubungi bantuan'
-      ])
+      response: Response.interactiveButton({
+        body: [
+          'Mohon maaf kami tidak mengerti yang kamu maksud 🙏',
+          'Silakan klik tombol di bawah ini.'
+        ].join('\n'),
+        buttons: [
+          {
+            reply: {
+              id: 'ya',
+              title: 'Ya'
+            },
+            type: 'reply'
+          },
+          {
+            reply: {
+              id: 'tidak',
+              title: 'Tidak'
+            },
+            type: 'reply'
+          }
+        ]
+      })
     })
   }
 }

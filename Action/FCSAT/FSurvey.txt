@@ -1,10 +1,9 @@
 import { F8ContextFallbackResponse } from '../../Bot/CSAT/F3Survey/Fallback'
 import { F6AskFeedbackPush } from '../../Bot/CSAT/F6Feedback/Main'
-import { ZendeskSatisfactionScoreType } from '../../Service/Zendesk'
 import { SystemEntity } from '../../Type/SystemEntity'
-import { SatisfactionButton, SatisfactionButtonId } from '../../Util/CSHelper'
+import { SatisfactionButton, SatisfactionButtonId } from '../../Util/Buttons'
 import { GetMenuID } from '../../Util/Interactive'
-
+import { ZendeskType } from '@bahasa-ai/plugins-chatbot'
 /**
  * Save CSAT answer to STM and update ticket to zendesk
  * @param event EventMiddleware
@@ -21,7 +20,7 @@ export const SaveCSATAnswer = async (event: EventMiddleware, data: DataMiddlewar
 
   const selected = SatisfactionButton.find(i => i.reply.id == menuId)
 
-  let csatScore: ZendeskSatisfactionScoreType
+  let csatScore: ZendeskType.ZendeskSatisfactionScoreType
   if (selected) {
 
     switch (selected.reply.id) {

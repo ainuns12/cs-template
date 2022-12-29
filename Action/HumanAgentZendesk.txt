@@ -1,0 +1,315 @@
+import * as Sentry from '@sentry/node'
+import { database, DatabaseTypes, QueryResult } from '@bahasa-ai/engine-database'
+import { RequestGetIntentAndEntity } from '@bahasa-ai/plugins-core-engine/dist/Types/AI'
+import { delay } from 'bluebird'
+
+import { PushHumanAgentResponse } from '../Bot/HumanAgentZendesk/Main'
+import { CancelTicketConfirmationPush, TicketCanceled } from '../Bot/HumanAgentZendesk/CancelConfirmation/Main'
+import { AskUserToWaitHumanAgent, ConnectedToAgentResponse, TicketClosedResponse, closingResponse } from '../Util/CSHelper'
+import { F3AskSurveyPush } from '../Bot/CSAT/F3Survey/Main'
+import { logger } from '../Util/Logger'
+import ErrorMiddleware from './ErrorMiddleware'
+import {
+  ZendeskType,
+  ZendeskBull,
+  EngineBull,
+  ZendeskUtils,
+  Utils
+} from '@bahasa-ai/plugins-chatbot'
+import { SatisfactionButton, SatisfactionButtonId } from '../Util/Buttons'
+import { GetMenuID } from '../Util/Interactive'
+
+const Response = Utils.ResponseBuilder.build('wa')
+
+export async function ActivateIris(event: EventMiddleware, d: DataMiddleware, n: StoryNextFunction) {
+  // remove chatbot reminder
+  await ZendeskUtils.Bull.removeChatbotReminderUtil(event.integration, event.sourceId)
+
+
+  const lockStatus = await ZendeskUtils.Cache.get.lockStatus(event.sourceId)
+
+  if (lockStatus) {
+    const message: ZendeskType.CommentTicketParam = ZendeskUtils.setTicketCommentParam(event.query, event.messageId)
+
+    await ZendeskUtils.Cache.get.addMessage(event.sourceId, message)
+    return
+  } else {
+    await ZendeskUtils.Cache.get.lockUser(event.sourceId)
+  }
+
+  const user = await Utils.getMongoUser(event.intent.agentId, event.sourceId, event.integration)
+
+  const ltm = await d.LTM.memory
+
+
+  try {
+    const tags = ['bantuan']
+
+    if (process.env.ENVIRONMENT != 'production') {
+      tags.push(`${process.env.AGENT_ID}_${process.env.ENVIRONMENT}`)
+    }
+
+    await ZendeskBull.get.createTicket({
+      sessionId: event.sessionId,
+      user,
+      createTicketParam: {
+        integration: event.integration,
+        sourceId: event.sourceId,
+        user: event.user,
+        tags,
+        zendeskRequesterId: ltm.zendeskRequesterId
+      }
+    })
+  } catch (error) {
+    logger.error(error)
+    Sentry.captureException(error)
+    return ErrorMiddleware(error, event, d)
+  }
+}
+
+export async function ToAgent(event: RequestGetIntentAndEntity) {
+  const { agentId, integration, messageId, query, sourceId } = event
+  await ZendeskUtils.ToAgentZendesk({
+    agentId,
+    integration,
+    messageId,
+    queryMessage: query,
+    sourceId,
+    customByQuery: [
+      {
+        query: 'batal',
+        action: askCancelTicketConfirmationAction
+      }
+    ]
+  })
+}
+
+export async function ToCustomer(data: ZendeskType.ZendeskWebhook) {
+  console.log('Zendesk Webhook %j', data)
+  let user: QueryResult<DatabaseTypes.User> = await ZendeskUtils.Cache.get.getUserDataByZendeskId(data.id)
+
+  if (!user) {
+    const users = await database().User.get({
+      'userData.zendeskTicketId': { $eq: Number(data.id) },
+      'userData.isInHumanFallback': { $eq: true },
+    })
+
+    if (!users || !users.length) {
+      return Sentry.captureException(new Error(`ToCustomer: ${data.id} user not found`))
+    }
+
+    user = users[0]
+
+    await ZendeskUtils.Cache.get.setUserDataByZendeskId(data.id, user)
+  }
+
+  if (!user.userData.isInHumanFallback) {
+    return
+  }
+
+  const lastCommentId = await await ZendeskUtils.Cache.get.getZendeskLastComment(data.id)
+  const agent = { _id: data.id.toString(), name: data.assignee.name }
+
+
+  // first message
+  if (!lastCommentId && data.latestComment.user.role != 'End-user') {
+    await new PushHumanAgentResponse().pushWithoutEvent({
+      agentId: user.agentId,
+      intentSlug: 'PushHumanAgentResponse',
+      sourceId: user.sourceId,
+      integration: user.integration as any,
+      isHumanFallback: true,
+      humanData: agent
+    }, Response.text([
+      ConnectedToAgentResponse()
+    ]))
+
+    await delay(500)
+  }
+
+  const statusForwardedToCustomer: ZendeskType.ZendeskTicketStatus[] = [
+    'Open', 'New', 'Baru', 'Buka', 'Pending', 'Tertunda', 'Hold', 'Ditahan'
+  ]
+
+  if (statusForwardedToCustomer.includes(data.status) && data.latestComment.user.role != 'End-user') {
+    const comments = ZendeskUtils.parseZendeskComment(data)
+    console.log('COMMENTS: ', comments)
+
+    if (data.status === 'Pending' || data.status === 'Tertunda') {
+      await ZendeskUtils.Bull.setSessionReminderAutoClose(user, data.id)
+    }
+
+    if (lastCommentId === data.latestComment.id) {
+      return
+    }
+
+    await ZendeskUtils.Cache.get.setZendeskLastComment(data.id, data.latestComment.id)
+    await ZendeskUtils.Cache.get.setUserTicket(user._id, data.id, data.tags.split(' '))
+
+    return await new PushHumanAgentResponse().pushWithoutEvent({
+      agentId: user.agentId,
+      intentSlug: 'PushHumanAgentResponse',
+      sourceId: user.sourceId,
+      integration: user.integration as any,
+      isHumanFallback: true,
+      humanData: agent
+    }, ZendeskUtils.generateResponseFromComment(comments))
+  } else if (data.status === 'Closed' || data.status === 'Solved' || data.status === 'Selesai') {
+    if (lastCommentId != data.latestComment.id && data.latestComment.user.role != 'End-user') {
+      const comments = ZendeskUtils.parseZendeskComment(data)
+
+      await new PushHumanAgentResponse().pushWithoutEvent({
+        agentId: user.agentId,
+        intentSlug: 'PushHumanAgentResponse',
+        sourceId: user.sourceId,
+        integration: user.integration as any,
+        isHumanFallback: true,
+        humanData: agent
+      }, ZendeskUtils.generateResponseFromComment(comments))
+    }
+
+    await database().User.updateById(user._id, {
+      userData: {
+        ...user.userData,
+        platform: null,
+        isInHumanFallback: false,
+        zendeskTicketId: null
+      }
+    })
+    await ZendeskBull.get.updateTagSolvedByAgent({ user, tags: data.tags.split(' ') })
+
+    await ZendeskUtils.Cache.get.deleteUserDataByZendeskId(data.id)
+
+    // clear autocancel reminder ticket
+    await ZendeskUtils.Bull.cancelSessionReminderAutoClose(user.sourceId, user.userData.zendeskTicketId)
+
+    await new PushHumanAgentResponse().pushWithoutEvent({
+      agentId: user.agentId,
+      intentSlug: 'PushHumanAgentResponse',
+      sourceId: user.sourceId,
+      integration: user.integration as any,
+      isHumanFallback: false
+    }, Response.text([
+      TicketClosedResponse()
+    ]))
+
+    await delay(500)
+
+    const LTMs = await database().LTM.get({
+      sourceId: { $eq: user.sourceId },
+      integration: { $eq: user.integration },
+      agentId: { $eq: user.agentId }
+    })
+
+    if (LTMs.length) {
+      // add csat autoclose
+      await EngineBull.get.addCsatAutoClose({
+        sourceId: user.sourceId,
+        integration: user.integration,
+        agentId: user.agentId,
+        sessionId: LTMs[0].lastSessionId,
+        handledBy: 'agent'
+      })
+    }
+
+
+    return await new F3AskSurveyPush().pushWithoutEvent({
+      agentId: user.agentId,
+      intentSlug: 'F3AskSurveyPush',
+      sourceId: user.sourceId,
+      integration: user.integration as any,
+      isHumanFallback: false
+    }, closingResponse([]))
+  }
+}
+
+export async function askCancelTicketConfirmationAction(user: QueryResult<DatabaseTypes.User>) {
+  await database().User.updateById(user._id, {
+    userData: {
+      ...user.userData,
+      isInHumanFallback: false
+    }
+  })
+
+  await ZendeskUtils.Bull.setSessionReminderAutoClose(user, user.userData.zendeskTicketId)
+
+  return new CancelTicketConfirmationPush().pushWithoutEvent({
+    agentId: user.agentId,
+    intentSlug: 'CancelTicketConfirmationPush',
+    sourceId: user.sourceId,
+    integration: user.integration as any
+  })
+}
+
+export async function CancelTicketConfirmationAction(e: EventMiddleware, d: DataMiddleware, __: StoryNextFunction) {
+  const menuId = GetMenuID(e.query)
+
+  const user = await Utils.getMongoUser(e.intent.agentId, e.sourceId, e.integration)
+
+  if (menuId === 'tidak') {
+    await ZendeskUtils.Bull.cancelSessionReminderAutoClose(user.sourceId, user.userData.zendeskTicketId)
+    await database().User.updateById(user._id, {
+      userData: {
+        ...user.userData,
+        isInHumanFallback: true
+      }
+    })
+
+    return await new PushHumanAgentResponse().push(e, Response.text([
+      AskUserToWaitHumanAgent()
+    ]))
+  } else {
+    await cancelTicketByUser(user)
+    await ZendeskUtils.Bull.addChatbotReminderUtil(e)
+
+    return await new TicketCanceled().push(e)
+  }
+}
+
+async function cancelTicketByUser(user: QueryResult<DatabaseTypes.User>) {
+  const zendeskTicketCache: ZendeskType.ZendeskTicketCache = await ZendeskUtils.Cache.get.getUserTicket(user.userData.zendeskTicketId)
+
+  if (!zendeskTicketCache) {
+    return
+  }
+
+  await database().User.updateById(user._id, {
+    userData: {
+      ...user.userData,
+      platform: null,
+      isInHumanFallback: false,
+      zendeskTicketId: null
+    }
+  })
+  await ZendeskUtils.Cache.get.deleteUserDataByZendeskId(user.userData.zendeskTicketId)
+  await ZendeskUtils.Bull.cancelSessionReminderAutoClose(user.sourceId, user.userData.zendeskTicketId)
+
+  await ZendeskBull.get.cancelTicketByUser({ user, tags: zendeskTicketCache.tags })
+
+}
+
+export async function ValidateUserRatingAction(e: EventMiddleware, d: DataMiddleware, n: StoryNextFunction) {
+  const menuId = GetMenuID(e.query)
+
+  const selected = SatisfactionButton.find(i => i.reply.id == menuId)
+
+  if (selected) {
+    switch (selected.reply.id) {
+      case SatisfactionButtonId.puas:
+        return await n(e, d)
+      case SatisfactionButtonId.tidakPuas:
+        return await n(e, d)
+    }
+  }
+}
+
+export const addChatbotReminder = async (event: EventMiddleware, data: DataMiddleware, next: StoryNextFunction) => {
+  await ZendeskUtils.Bull.addChatbotReminderUtil(event)
+
+  return next(event, data)
+}
+
+export const removeChatbotReminder = async (event: EventMiddleware, data: DataMiddleware, next: StoryNextFunction) => {
+  await ZendeskUtils.Bull.removeChatbotReminderUtil(event.integration, event.sourceId)
+  return next(event, data)
+}

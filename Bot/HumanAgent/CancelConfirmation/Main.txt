@@ -1,10 +1,10 @@
 import { TriggerIntentPayload } from '@bahasa-ai/plugins-core-engine'
-import { addChatbotReminder } from '../../../Action/{{Action}}Middleware'
-import { CancelTicketConfirmationAction } from '../../../Action/{{Action}}'
+import { addChatbotReminder } from '../../../Action/HumanAgentZendesk'
+import { CancelTicketConfirmationAction } from '../../../Action/HumanAgentZendesk'
 import LogEvent from '../../../Action/LogEvent'
 import { InitialIntent, PushIntent } from '../../../Bot'
 import Response from '../../../Util/Response'
-import { UserConfirmationExpression } from '../../../Util/ReusableExpression'
+import { InteractiveExpression } from '../../../Util/ReusableExpression'
 
 export class CancelTicketConfirmationPush extends PushIntent {
   static isContextReplaced = true
@@ -14,13 +14,27 @@ export class CancelTicketConfirmationPush extends PushIntent {
 
   public async pushWithoutEvent(payload: TriggerIntentPayload) {
     return this.triggerWithoutEvent(payload, {
-      response: Response.text([
-        [
-          'Apakah kamu yakin untuk membatalkan *bantuan*?',
-          '_Ketik *iya* jika ingin membatalkan_',
-          '_Ketik *tidak* jika ingin lanjut menghubungi bantuan_'
-        ].join('\n')
-      ])
+      response: Response.interactiveButton({
+        body: [
+          'Apakah kamu yakin untuk membatalkan *bantuan*?'
+        ].join('\n'),
+        buttons: [
+          {
+            reply: {
+              id: 'ya',
+              title: 'Ya'
+            },
+            type: 'reply'
+          },
+          {
+            reply: {
+              id: 'tidak',
+              title: 'Tidak'
+            },
+            type: 'reply'
+          }
+        ]
+      })
     })
   }
 }
@@ -30,8 +44,8 @@ export class CancelTicketConfirmation extends InitialIntent {
     'cCancelTicketConfirmation'
   ]
 
-  static parameter = UserConfirmationExpression.parameter
-  static userExpression = UserConfirmationExpression.userExpression
+  static parameter = InteractiveExpression.parameter
+  static userExpression = InteractiveExpression.userExpression
 
   public actions() {
     return this.run(LogEvent).run(addChatbotReminder).run(CancelTicketConfirmationAction)

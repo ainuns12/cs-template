@@ -3,7 +3,7 @@ import { AddCsatAutocloseAction } from '../../../Action/FCSAT/FCsatAutoclose'
 import { F6AskFeedbackReason, SaveCSATAnswer } from '../../../Action/FCSAT/FSurvey'
 
 import LogEvent from '../../../Action/LogEvent'
-import { ValidateUserRatingAction } from '../../../Action/{{Action}}Middleware'
+import { ValidateUserRatingAction } from '../../../Action/HumanAgentZendesk'
 import { InitialIntent, PushIntent } from '../../../Bot'
 import Response from '../../../Util/Response'
 import { InteractiveExpression } from '../../../Util/ReusableExpression'

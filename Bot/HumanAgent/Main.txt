@@ -1,7 +1,7 @@
 import { TriggerIntentPayload } from '@bahasa-ai/plugins-core-engine'
-import { removeChatbotReminder } from '../../Action/{{Action}}Middleware'
+import { removeChatbotReminder } from '../../Action/HumanAgentZendesk'
 import { CanceCsatAutoCloseAction } from '../../Action/FCSAT/FCsatAutoclose'
-import { ActivateIris } from '../../Action/{{Action}}'
+import { ActivateIris } from '../../Action/HumanAgentZendesk'
 import LogEvent from '../../Action/LogEvent'
 import { InitialIntent, PushIntent } from '../../Bot'
 

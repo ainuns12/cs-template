@@ -1,0 +1,157 @@
+import { database } from '@bahasa-ai/engine-database'
+import * as Sentry from '@sentry/node'
+import { F3AskSurveyPush } from '../Bot/CSAT/F3Survey/Main'
+import { closingResponse } from '../Util/CSHelper'
+import { ZendeskType, EngineBull, ZendeskBull, ZendeskUtils, Utils } from '@bahasa-ai/plugins-chatbot'
+import { CsatTimeoutPush } from '../Bot/CSAT/F9CsatTimeout/Main'
+import Response from '../Util/Response'
+import { PushHumanAgentResponse } from '../Bot/HumanAgentZendesk/Main'
+import { delay } from 'bluebird'
+import { F1ChatbotSessionNotifierPush } from '../Bot/CSAT/F1SessionNotifier/Main'
+
+
+
+export async function AutoCloseTicket(result: ZendeskType.EngineQueueResults, error: Error) {
+  try {
+    if (error) throw error
+
+    const { user, ticket } = result
+    await database().User.updateById(user._id, {
+      userData: {
+        ...user.userData,
+        platform: null,
+        isInHumanFallback: false,
+        zendeskTicketId: null
+      }
+    })
+
+    await ZendeskUtils.Cache.get.deleteUserDataByZendeskId(user.userData.zendeskTicketId)
+
+    await ZendeskBull.get.ticketAutoClose({ user, tags: ticket.tags })
+
+    await new PushHumanAgentResponse().pushWithoutEvent({
+      agentId: user.agentId,
+      intentSlug: 'PushHumanAgentResponse',
+      sourceId: user.sourceId,
+      integration: user.integration as any,
+    }, Response.text([
+      [
+        'Mohon maaf sesi kamu sudah berakhir.',
+      ].join('\n')
+    ]))
+
+    await delay(1000)
+
+    await new F3AskSurveyPush().pushWithoutEvent({
+      agentId: user.agentId,
+      intentSlug: 'F3AskSurveyPush',
+      sourceId: user.sourceId,
+      integration: user.integration as any,
+      isHumanFallback: false
+    }, closingResponse([]))
+
+    const LTMs = await database().LTM.get({
+      sourceId: { $eq: user.sourceId },
+      integration: { $eq: user.integration },
+      agentId: { $eq: user.agentId }
+    })
+
+    if (LTMs.length) {
+      // add csat autoclose
+      await EngineBull.get.addCsatAutoClose({
+        sourceId: user.sourceId,
+        integration: user.integration,
+        agentId: user.agentId,
+        sessionId: LTMs[0].lastSessionId,
+        handledBy: 'agent'
+      })
+    }
+
+    return
+  } catch (error) {
+    console.error(error)
+    Sentry.captureException(error)
+    throw new Error(error)
+  }
+}
+
+export async function ChatbotNotifier(result: ZendeskType.EngineQueueResults, error) {
+  if (error) throw new Error(error)
+  const { user, agentId, sourceId, integration } = result
+
+  return await new F1ChatbotSessionNotifierPush().pushWithoutEvent({
+    agentId: agentId,
+    intentSlug: 'F1ChatbotSessionNotifierPush',
+    sourceId: sourceId,
+    integration: integration as any,
+  }, user.userData.name)
+
+}
+
+export async function ChatbotCloseSession(result: ZendeskType.EngineQueueResults, error) {
+  if (error) throw new Error(error)
+  const { agentId, integration, sourceId, sessionId } = result
+
+  await new F3AskSurveyPush().pushWithoutEvent({
+    agentId,
+    intentSlug: 'F3AskSurveyPush',
+    sourceId,
+    integration: integration as any,
+    isHumanFallback: false
+  }, closingResponse())
+
+  // add csat autoclose
+  return await EngineBull.get.addCsatAutoClose({
+    handledBy: 'bot',
+    agentId,
+    integration,
+    sessionId,
+    sourceId
+
+  })
+}
+
+
+export async function CsatAutoClose(result: ZendeskType.EngineQueueResults, error) {
+  if (error) throw new Error(error)
+
+  const { agentId, integration, sourceId, sessionId } = result
+
+  await new CsatTimeoutPush().pushWithoutEvent({
+    agentId: agentId,
+    intentSlug: 'CsatTimeoutPush',
+    sourceId: sourceId,
+    integration: integration as any,
+    isHumanFallback: false,
+  })
+
+  // expire session
+  return await Utils.forceSessionExpired(sessionId)
+
+}
+
+export async function UserReminderTicket(result: ZendeskType.EngineQueueResults, error) {
+  try {
+    if (error) throw new Error(error)
+    const { user } = result
+    const agent = { _id: process.env.AGENT_ID, name: 'Bot Reminder' }
+
+    return await new PushHumanAgentResponse().pushWithoutEvent({
+      agentId: user.agentId,
+      intentSlug: 'PushHumanAgentResponse',
+      sourceId: user.sourceId,
+      integration: user.integration as any,
+      isHumanFallback: true,
+      humanData: agent
+    }, Response.text([
+      [
+        `Halo Kak ${user.userData.name}, tim kami masih menunggu konfirmasi dari kamu ya 😊`
+      ].join('\n')
+    ]))
+
+  } catch (error) {
+    console.error(error)
+    Sentry.captureException(error)
+    throw new Error(error)
+  }
+}
