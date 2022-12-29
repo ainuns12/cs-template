@@ -4,6 +4,6 @@
       await ToCustomer(req.body)
       return
     } catch (error) {
-      Sentry.captureException(error)
+      console.error(error)
     }
   })
