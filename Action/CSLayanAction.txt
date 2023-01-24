@@ -54,7 +54,11 @@ export async function CreateTicket(event: EventMiddleware, data: DataMiddleware,
     ticket: {
       tags: tags,
       room: {
-        title: event.user.name
+        title: event.user.name,
+        bot: {
+          agentId: event.agentId,
+          integration: event.integration
+        }
       }
     }
   })
@@ -153,7 +157,16 @@ export async function ToAgent(event: RequestGetIntentAndEntity) {
             url: url,
             mimeType: mimeType
           }
+        },
+        ticket: {
+          room: {
+            bot: {
+              agentId: event.agentId,
+              integration: event.integration
+            }
+          }
         }
+        
       })
     } catch (e) {
       comment = e
@@ -166,6 +179,14 @@ export async function ToAgent(event: RequestGetIntentAndEntity) {
         content: {
           type: 'text',
           text: event.query
+        },
+        ticket: {
+          room: {
+            bot: {
+              agentId: event.agentId,
+              integration: event.integration
+            }
+          }
         }
       })
     } catch (e) {
